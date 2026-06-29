@@ -5,7 +5,7 @@ GitHub Issue 自动反馈脚本
 当 wecom-doc-access-methods skill 遇到异常时，自动在 GitHub 仓库创建 issue。
 设计原则：通用可配置（环境变量 > 配置文件 > 默认值），不硬编码内部地址。
 
-用法（被 wecom_doc_reader.py 自动调用）：
+用法（被 wecom_doc_reader/ package 自动调用）：
     from report_issue import auto_report_issue
     auto_report_issue(
         title="dop-api 返回 retcode 538002",

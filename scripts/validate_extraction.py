@@ -2,7 +2,7 @@
 """
 e3_ 电子表格提取结果 vs 原始文档 ground-truth 验证脚本。
 用法：
-  1. 先跑 wecom_doc_reader.py 的 read() 拿到全量数据
+  1. 先跑 wecom_doc_reader/ package 的 read() 拿到全量数据
   2. 用本脚本导出指定子表的前 N 行为 CSV
   3. 人工对照原始企微文档中对应位置的值，确认一致性
 
@@ -14,7 +14,7 @@ import json, csv, sys, argparse
 
 def main():
     parser = argparse.ArgumentParser(description="验证 e3_ 表格提取结果")
-    parser.add_argument("--data", required=True, help="wecom_doc_reader.py read 输出的 JSON 文件路径")
+    parser.add_argument("--data", required=True, help="wecom_doc_reader/ read 输出的 JSON 文件路径")
     parser.add_argument("--sheet", required=True, help="要验证的子表名称")
     parser.add_argument("--rows", type=int, default=20, help="导出前 N 行（默认 20）")
     parser.add_argument("--csv", default=None, help="CSV 输出路径（默认 stdout）")

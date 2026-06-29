@@ -7,7 +7,7 @@
 **外层结构**: `response.data.initialAttributedText.text[0]` 是一个包装对象：
 ```json
 {
-  "smartsheet": "[[{\"t\":3005,...},{\"t\":3028,...}]]",  // ← JSON 字符串，需 JSON.parse()
+  "smartsheet": "eJykVNtuG7cR...",  // ← base64+zlib 压缩格式（以 eJ 开头），不是 JSON 字符串！
   "workbook": "[{\"id\":\"q979lj\",\"name\":\"表1\",\"hidden\":false},...]",  // JSON 字符串
   "total_record_count": 2932,
   "max_row": 2932,
@@ -15,26 +15,52 @@
   "end_row_index": 2932
 }
 ```
-**⚠️ 关键**: `smartsheet` 字段是 **JSON 字符串**（不是 base64），需要 `JSON.parse()`。解析后得到 `[[{t:3005,...}, {t:3028,...}]]`（双层数组，取 `[0]`）。
+
+**🚨 关键纠正（2026-06-29 实测，推翻 2026-06-13 的错误结论）**：
+- `smartsheet` 字段是 **base64+zlib 压缩格式**（以 `eJ` 开头），**不是** JSON 字符串
+- 之前认为 "startrow=0 返回 JSON 字符串、startrow=61+ 返回 base64+zlib" 是**错误的**
+- 两种方式（拦截页面自动加载 + 主动 fetch startrow=0）返回的都是 base64+zlib
+- 解码方式与格式 B 完全一致：`base64.urlsafe_b64decode` + `zlib.decompress` + `json.loads`
+
+**⚠️ 主动 fetch 必须传完整参数集**（2026-06-29 实测）：
+只传 `padId+subId+startrow+endrow+outformat+normal` 会返回 `retcode 538002: "Get content error"`。
+必须传以下完整参数：
+```
+padId={doc_id}&subId={sheet_id}&startrow=0&endrow=99999
+&xsrf={xsrf}&outformat=1&normal=1&nowb=1
+&needSheetState=2&rev={rev}&optimizedVer=2
+&chunkCellSize=15000&enableChunkRank=1&enablePermOpt=0
+```
+其中 `xsrf` 和 `rev` 是动态参数，必须**拦截页面首次 `get/sheet` 请求**的 URL 参数获取，不能硬编码。
+
+**⚠️ 多子表遍历**：不需要切换 tab。从 `collab_client_vars.initialAttributedText.text[0].workbook`（JS 运行时，JSON 字符串需 `JSON.parse`）获取子表列表后，用同一套参数+不同 `subId` 即可 fetch 所有子表。
 
 ```python
-# JS 端解析
-parsed = JSON.parse(item.smartsheet)  // [[items...]]
-items = parsed[0] if isinstance(parsed[0], list) else parsed
+# Python 端解码（JS 端只返回原始 smartsheet 字符串）
+import base64, zlib, json
+
+ss_raw = result["smartsheet"]  # "eJykVNtuG7cR..."
+padding = 4 - len(ss_raw) % 4
+if padding != 4: ss_raw += "=" * padding
+decoded = base64.urlsafe_b64decode(ss_raw)
+decompressed = zlib.decompress(decoded)
+parsed = json.loads(decompressed.decode("utf-8"))
+# parsed 可能双层嵌套 [[items...]]，取第一层
+if parsed and isinstance(parsed[0], list): parsed = parsed[0]
 # items = [{t:3005, c:{...}}, {t:3028, c:{...}}]
 ```
 
-解析后内部结构（数字键）：
+解析后内部结构（k 前缀键，与格式 B 一致）：
 ```json
 {
   "t": 3028, "v": 5,
   "c": {
-    "1": "sheet_id",
-    "2": {
-      "1": { ... },      // 行数据（record_id → cell data）
-      "2": { ... },      // 元数据
-      "3": { ... },      // 视图
-      "5": { ... }       // 字段顺序
+    "k1": "sheet_id",
+    "k2": {
+      "k1": { ... },      // 行数据（record_id → cell data）
+      "k2": { ... },      // 元数据
+      "k3": { ... },      // 视图
+      "k5": { ... }       // 字段顺序
     }
   }
 }
@@ -54,11 +80,11 @@ data = json.loads(decompressed)
 
 | 格式 | 来源 | 行数据位置 | 列选项映射来源 | 需要解压 |
 |------|------|-----------|---------------|---------|
-| **startrow=0 JSON** | 主动 fetch | `JSON.parse(text[0].smartsheet)[0]` → 找 t=3028 → `.c.2.1` | t=3005 项的 `.c.3.3` | ❌ JSON.parse 即可 |
-| startrow=61+ 纯 JSON | 拦截（旧方式） | `parsed[0][1].c.2.1` | t=3005 项的 `c.3.3` | ❌ |
-| base64+zlib | opendoc 拦截 | `parsed[0][0].c.k2.k1` | t=3005 项的 `c.k3.k3` | ✅ urlsafe_b64decode + zlib |
+| **startrow=0 base64+zlib** | 主动 fetch（✅ 推荐） | `urlsafe_b64decode + zlib.decompress` → 找 t=3028 → `.c.k2.k1` | t=3005 项的 `.c.k3.k3` | ✅ urlsafe_b64decode + zlib |
+| base64+zlib（k前缀键） | 页面自动加载拦截 | `parsed[0][0].c.k2.k1` | t=3005 项的 `c.k3.k3` | ✅ urlsafe_b64decode + zlib |
+| ~~startrow=0 JSON~~ | ~~主动 fetch~~ | ~~`JSON.parse(text[0].smartsheet)[0]`~~ | ~~t=3005 `.c.3.3`~~ | ~~❌ JSON.parse~~ — **🚨 已推翻，实际是 base64+zlib** |
 
-**⚠️ 推荐**: 始终使用 startrow=0 主动 fetch 方式。返回纯 JSON 字符串，无需解压，全量数据。
+**⚠️ 推荐**: 始终使用 startrow=0 主动 fetch 方式（需完整参数集 + xsrf 拦截）。返回 base64+zlib 压缩格式，解码后得到全量数据。两种来源（主动 fetch + 页面拦截）返回格式一致，都是 base64+zlib，解码后都是 k 前缀键结构。
 
 ## 列类型 ID（k31）— 2026-06-15 实测验证
 
@@ -212,7 +238,16 @@ https://doc.weixin.qq.com/dop-api/get/mind?padId={doc_id}&normal=1
 
 ## 多子表遍历模式（v2.0，2026-06-15）
 
-### 完整流程
+### ⚠️ v4.2.0 改进（2026-06-29 实测）
+
+v4.2.0 对多子表遍历做了重要改进，推荐使用新方案：
+
+1. **不需要从 URL 提取 `current_tab`**：直接拦截页面首次 `get/sheet` 请求获取 `xsrf`/`rev` 等动态参数
+2. **从 JS 运行时获取 workbook**：`window.clientVars?.collab_client_vars?.initialAttributedText?.text[0]?.workbook`（JSON 字符串，需 `JSON.parse`）
+3. **不需要切换 tab**：用同一套参数 + 不同 `subId` 即可 fetch 所有子表
+4. **smartsheet 字段统一用 base64+zlib 解码**（不再区分 "JSON 字符串" vs "base64+zlib"）
+
+### 完整流程（v4.2.0）
 
 ```python
 # 1. 第一次 fetch（用 current_tab，即页面默认 tab）

@@ -1,6 +1,6 @@
 ---
 name: wecom-doc-access-methods
-version: 4.1.5
+version: 4.4.0
 description: >
   企微文档读取 Skill。以下 4 种文档类型已通过完整实测验证：
   ① s3_ 智能表格 — dop-api 全量结构化读取，多子表自动遍历，select 选项映射，用户字段解析，2000 条以上全量获取；
@@ -415,7 +415,9 @@ async def fetch_via_active_fetch(state_file, doc_url, doc_id, sheet_id=None):
 | 来源 | 格式 | 行数据路径 | 是否需要解压 |
 |------|------|-----------|-------------|
 | 页面自动加载 | base64+zlib（k前缀键） | `parsed[0][0].c.k2.k1` | ✅ urlsafe_b64decode + zlib |
-| 主动 fetch | 纯 JSON（数字键） | `parsed[0][1].c.2.1` 或直接 `.c.2.1` | ❌ |
+| 主动 fetch | base64+zlib（k前缀键） | 解码后找 t=3028 → `.c.k2.k1` | ✅ urlsafe_b64decode + zlib |
+
+**⚠️ 两种来源返回格式一致**：都是 base64+zlib 压缩，解码后都是 k 前缀键结构。不要假设主动 fetch 返回"纯 JSON"（2026-06-29 实测推翻此错误结论）。
 
 **字段值提取**：
 
@@ -612,12 +614,12 @@ workbook = json.loads(workbook_json)
   3. `HYPERLINK "url" text` — 带引号 URL
   4. `HYPERLINK url text` — 残留关键字（无 URL）
 - ✅ 清理逻辑：先处理带引号的复杂格式，再处理简单格式，最后清理残留关键字
-- 详见 `scripts/wecom_doc_reader.py` 的 `_decode_wecom_text()` 函数
+- 详见 `scripts/wecom_doc_reader/reader.py` 的 `read()` 方法（HYPERLINK 清理逻辑内联于读取流程中）
 
 ### e3_ 多子表切换延迟
 - ⚠️ 切换 tab 后需要等待足够时间让 canvas 完全渲染（5s），否则剪贴板提取会拿到空数据
 - ✅ v2.1 将等待时间从 3s 增加到 5s，解决最后一个子表偶尔 0 行的问题
-- 详见 `scripts/wecom_doc_reader.py` 的 `_try_clipboard_for_spreadsheet()` 函数
+- 详见 `scripts/wecom_doc_reader/reader.py` 的 `_try_clipboard_for_spreadsheet()` 方法
 
 ### e3_ HTML 多子表遍历（v2.7.0 新增）
 - ⚠️ `_try_clipboard_html_all_sheets` 会逐个切换 tab 并对每个子表做 Ctrl+A/C → 读 HTML clipboard
@@ -794,15 +796,92 @@ export ISSUE_AUTO="1"                    # 1=自动提交, 0=只打印不提交
 - `references/mcp-get-doc-content-multisheet-parsing.md` — **🆕 MCP get_doc_content 多子表 Markdown 解析**（不同子表列数不同、`|`字符列错位、排序破坏边界、重复子表检测、列名模糊匹配、解析脚本模板）
 - `scripts/wecom_login.py` — 扫码登录脚本（生成 QR 码 + 保存 storage_state）
 - `scripts/check_cookie_expiry.py` — **🆕 cookie 过期检查**（检查 wedoc_sid/wedoc_ticket 剩余天数，距过期 ≤2 天输出警告，供 cron 主动提醒）
-- `scripts/wecom_reader.py` — 通用读取工具（check / fetch / fetch-sheet）
-- `scripts/wecom_fetch.py` — 简化版 dop-api fetch
+- `scripts/wecom_fetch.py` — 底层 dop-api 调试工具（7 个函数，直接 HTTP 请求 dop-api）
 - `scripts/validate_extraction.py` — **🆕 提取结果 ground-truth 验证**（导出子表前 N 行为 CSV，对照原始文档逐列检查）
 - `scripts/wecom_doc_auth_check.py` — **🆕 授权状态定时检测**（cookie 过期预警 + MCP 851014 告警，crontab 每日跑，有异常才输出）
 
 ---
 
+## Cookie 与授权状态定时检查（长期使用必读）
+
+当本 skill 用于定时任务、数据同步等长期场景时，浏览器扫码 cookie（`wedoc_sid`）约 **2 周过期**，MCP 文档授权也可能过期（errcode 851014）。必须部署每日检查 cron，在过期前主动提醒续期。
+
+### 检查脚本
+
+`scripts/wecom_doc_auth_check.py` — 静默运行，有异常才输出（适合 cron）：
+
+| 检查项 | 检测条件 | 告警内容 |
+|--------|---------|---------|
+| 浏览器 cookie | `wedoc_sid` 剩余 ≤2 天 | 提醒扫码续期 |
+| MCP 授权 | errcode 851014 / 2200063 | 提醒重新授权机器人文档权限 |
+
+### 部署方式
+
+#### 方式一：Hermes Cron（推荐）
+
+```bash
+# 1. 复制脚本到 Hermes scripts 目录
+cp scripts/wecom_doc_auth_check.py ~/.hermes/scripts/
+
+# 2. 创建 no_agent cron job（纯脚本，不启动 agent）
+# 通过 Hermes cronjob 工具或 CLI 创建：
+#   schedule: 每日 09:17（避开整点高峰）
+#   script: wecom_doc_auth_check.py
+#   no_agent: true
+#   deliver: origin（输出推送到当前对话）
+```
+
+#### 方式二：系统 crontab
+
+```bash
+# 1. 复制脚本
+cp scripts/wecom_doc_auth_check.py ~/scripts/
+
+# 2. 编辑 crontab
+crontab -e
+# 添加（每日 09:17 运行，有输出才发邮件/通知）：
+17 9 * * * python3 ~/scripts/wecom_doc_auth_check.py 2>&1
+```
+
+### 配置说明
+
+脚本内需配置两个路径（已内置默认值，按需修改）：
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `STATE_FILE` | `~/.hermes/scripts/wecom_states/_shared.json` | 浏览器 storage_state 文件路径 |
+| `MCP_URL` | 企微文档 MCP endpoint | 用于检测 MCP 授权状态 |
+
+### 续期操作
+
+收到告警后：
+
+1. **cookie 续期**：运行 `python3 scripts/wecom_login.py --state ~/.hermes/scripts/wecom_states/_shared.json --qr /tmp/wecom_qr.png`，扫码登录后 cookie 自动刷新
+2. **MCP 授权续期**：在企微管理后台重新授权机器人文档权限（授权链接见告警消息）
+
+---
+
 ## 更新日志
 
+- **2026-06-30** (v4.4.0): 🔧 **模块化拆分 — 单文件 2311 行 → 7 模块 package**
+  - **拆分** `scripts/wecom_doc_reader.py`（2311 行）→ `scripts/wecom_doc_reader/` package（7 个模块）
+    - `__init__.py`（91 行）— 聚合 re-export，保持 `from wecom_doc_reader import WeComDocReader` 等所有外部 API 完全兼容
+    - `__main__.py`（6 行）— 支持 `python3 -m wecom_doc_reader` CLI 入口
+    - `constants.py`（66 行）— 字段类型常量、URL 映射、DOM 选择器、版本号
+    - `utils.py`（20 行）— `_auto_report()` GitHub issue 自动反馈
+    - `parsers.py`（146 行）— `parse_doc_url()`、`_cell_value()`、`_parse_column_defs()`、`_block_fonts()`、`_is_login_page()`
+    - `reader.py`（1899 行）— `WeComDocReader` 类（含多策略 read、dop-api、思维导图、用户管理）
+    - `cli.py`（192 行）— `_legacy_main()`、`_legacy_login()`、`main()` CLI 入口
+  - **兼容性保证**：`from wecom_doc_reader import WeComDocReader, parse_doc_url, _parse_column_defs, _cell_value, _FIELD_TYPE_TEXT, _FIELD_TYPE_SELECT` 等所有外部 import 路径完全不变
+  - **CLI 变化**：`python3 wecom_doc_reader.py` → `python3 -m wecom_doc_reader`
+  - **验证**：19/19 离线测试全部通过，所有外部 API 符号 import 验证成功
+  - **修复文档**：`_decode_wecom_text()` 函数引用已更新（该函数在早期重构中已删除，文档未同步）
+- **2026-06-29** (v4.3.0): 🔧 **工程规范升级 — 依赖声明 + 冗余清理 + Cookie 检查部署指南**
+  - 新增 `requirements.txt`（声明 playwright + requests 两个第三方依赖，含脚本依赖映射注释）
+  - 删除 `scripts/wecom_reader.py`（已废弃，功能完全被 `wecom_doc_reader.py` 覆盖）
+  - 更新 `scripts/wecom_fetch.py` 描述为「底层 dop-api 调试工具」（原标注不够准确）
+  - 新增「Cookie 与授权状态定时检查」章节：完整的 cron 部署指南（Hermes cron + 系统 crontab 两种方式）、配置说明、续期操作步骤
+  - README.md 英文/中文脚本表同步更新（删除 wecom_reader.py，更新 wecom_fetch.py 描述）
 - **2026-06-29** (v4.1.5): 🔄 **推荐策略调整 — 浏览器 dop-api 上升为首选方案**
   - **用户要求**：建哥明确指示"以后优先用 wecom-doc-access-methods skill 获取微文档内容"（指浏览器 dop-api 方案）
   - **调整内容**：
