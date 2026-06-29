@@ -51,7 +51,22 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone, timedelta
 
-__version__ = "4.0.0"
+# GitHub issue 自动反馈（懒加载，避免循环导入）
+def _auto_report(title, error_detail="", context=None):
+    """遇到关键错误时自动在 GitHub 创建 issue"""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "report_issue",
+            Path(__file__).parent / "report_issue.py"
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.auto_report_issue(title, error_detail, context or {})
+    except Exception:
+        pass  # 不让 issue 反馈本身影响主流程
+
+__version__ = "4.2.0"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 常量
@@ -90,7 +105,7 @@ def parse_doc_url(url: str) -> dict:
 
     返回:
         {
-            "doc_type": "s3" | "w3" | "e3" | "unknown",
+            "doc_type": "s3" | "w3" | "e3" | "m4" | "unknown",
             "doc_id": "s3_xxx",
             "path_type": "smartsheet" | "doc" | "sheet" | "form" | ...,
             "scode": str | None,
@@ -189,7 +204,7 @@ def _parse_column_defs(items: list) -> tuple:
                 # select 选项
                 if ftype == _FIELD_TYPE_SELECT:
                     k17 = meta.get("17") or meta.get("k17") or {}
-                    k3 = k17.get("3") or k3.get("k3") or []
+                    k3 = k17.get("3") or k17.get("k3") or []
                     if k3:
                         select_options[fid] = {
                             (o.get("1") or o.get("k1")): (o.get("2") or o.get("k2"))
@@ -474,7 +489,8 @@ class WeComDocReader:
         """
         读取企微文档。自动根据 URL 路由:
           - s3_ 智能表格 → _read_smartsheet (dop-api 全量结构化)
-          - e3_ 电子表格 → _read_spreadsheet (dop-api 尝试 + DOM/剪贴板兜底)
+          - e3_ 电子表格 → _read_spreadsheet (原生 JS API + 剪贴板 HTML 兜底)
+          - m4_ 思维导图 → _read_mind (dop-api/get/mind JSON 节点树)
           - 其他类型     → _read_dom (DOM 文本提取)
 
         返回:
@@ -1721,7 +1737,13 @@ class WeComDocReader:
     async def _read_smartsheet(
         self, user_id: str, url: str, sheet_id: str = None
     ) -> dict:
-        """通过 dop-api 获取 s3_ 智能表格全量结构化数据"""
+        """通过 dop-api 获取 s3_ 智能表格全量结构化数据。
+
+        方案：拦截页面首次 get/sheet 请求获取 xsrf 等动态参数，
+        然后用完整参数主动 fetch startrow=0 获取全量数据。
+        smartsheet 字段是 base64+zlib 压缩格式，需在 Python 端解码。
+        多子表：从 collab_client_vars 获取 workbook，遍历所有 smartsheet 子表。
+        """
         from playwright.async_api import async_playwright
 
         state_file = str(self._state_file(user_id))
@@ -1743,7 +1765,16 @@ class WeComDocReader:
             page = await ctx.new_page()
             await _block_fonts(page)
 
-            page.on("response", lambda r: None)  # placeholder
+            # 拦截页面首次 get/sheet 请求，提取 xsrf 等动态参数
+            captured_params = None
+
+            def _on_request(request):
+                nonlocal captured_params
+                if "dop-api/get/sheet" in request.url and not captured_params:
+                    qs = parse_qs(urlparse(request.url).query)
+                    captured_params = {k: v[0] for k, v in qs.items()}
+
+            page.on("request", _on_request)
 
             try:
                 await page.goto(url, wait_until="networkidle", timeout=60000)
@@ -1759,108 +1790,183 @@ class WeComDocReader:
                     "user_id": user_id,
                 }
 
-            # 从页面 URL 提取当前 tab（页面加载后 URL 可能自动追加 &tab=xxx）
-            if not sheet_id:
-                page_query = parse_qs(urlparse(page.url).query)
-                sheet_id = page_query.get("tab", [None])[0]
+            if not captured_params:
+                await browser.close()
+                _auto_report("dop-api 未拦截到 get/sheet 请求",
+                             "页面加载后未拦截到 dop-api/get/sheet 请求，无法获取 xsrf 参数。可能是页面结构变化或加载超时。",
+                             {"url": url, "user_id": user_id, "step": "intercept_xsrf"})
+                return {"success": False, "error": "未拦截到 dop-api/get/sheet 请求，无法获取 xsrf 参数"}
 
-            # 主动 fetch 全量（startrow=0 确保从头开始，返回纯 JSON 字符串）
-            api_url = (
-                f"https://doc.weixin.qq.com/dop-api/get/sheet"
-                f"?padId={info['doc_id']}&subId={sheet_id}"
-                f"&startrow=0&endrow=99999&outformat=1&normal=1"
-            )
-            fetch_result = await page.evaluate(
-                """async (url) => {
-                    try {
-                        const r = await fetch(url, { credentials: 'include' });
-                        const j = await r.json();
-                        const item = j?.data?.initialAttributedText?.text?.[0];
-                        if (!item) return { error: 'no text item' };
-                        // smartsheet 字段是纯 JSON 字符串（startrow=0 时不需解压）
-                        const ss = item.smartsheet;
-                        if (!ss) return { error: 'no smartsheet field' };
-                        let parsed;
-                        try { parsed = JSON.parse(ss); } catch(e) { return { error: 'smartsheet parse failed: ' + e.message }; }
-                        return {
-                            ok: true,
-                            total_record_count: item.total_record_count,
-                            max_row: item.max_row,
-                            workbook_json: item.workbook || '[]',
-                            parsed: parsed,
-                        };
-                    } catch (e) {
-                        return { error: e.message };
-                    }
-                }""",
-                api_url,
-            )
+            xsrf = captured_params.get("xsrf", "")
+            rev = captured_params.get("rev", "")
+            doc_id = info["doc_id"]
+
+            # 从 collab_client_vars 获取 workbook（子表列表）
+            workbook = await page.evaluate("""() => {
+                const ccv = window.clientVars?.collab_client_vars;
+                if (!ccv) return null;
+                const iat = ccv.initialAttributedText;
+                if (!iat || !iat.text || !iat.text[0]) return null;
+                const wb = iat.text[0].workbook;
+                return wb ? JSON.parse(wb) : null;
+            }""")
+
+            if not workbook:
+                await browser.close()
+                return {"success": False, "error": "无法获取 workbook（子表列表）"}
+
+            # 确定要读取的子表列表
+            all_sheets = [s for s in workbook if s.get("type") == "smartsheet"]
+            if sheet_id:
+                # 只读指定子表
+                target_sheets = [s for s in all_sheets if s["id"] == sheet_id]
+                if not target_sheets:
+                    target_sheets = [{"id": sheet_id, "name": sheet_id}]
+            else:
+                target_sheets = all_sheets
+
+            # 对每个子表主动 fetch 全量数据
+            all_results = []
+            for sh in target_sheets:
+                sid = sh["id"]
+                sname = sh.get("name", sid)
+                api_url = (
+                    f"https://doc.weixin.qq.com/dop-api/get/sheet"
+                    f"?padId={doc_id}&subId={sid}"
+                    f"&startrow=0&endrow=99999&xsrf={xsrf}"
+                    f"&outformat=1&normal=1&nowb=1&needSheetState=2"
+                    f"&rev={rev}&optimizedVer=2"
+                    f"&chunkCellSize=15000&enableChunkRank=1&enablePermOpt=0"
+                )
+                # JS 端返回原始 smartsheet 字符串（base64+zlib）
+                fetch_result = await page.evaluate(
+                    """async (url) => {
+                        try {
+                            const r = await fetch(url, { credentials: 'include' });
+                            const j = await r.json();
+                            const item = j?.data?.initialAttributedText?.text?.[0];
+                            if (!item) return { error: j.errmsg || 'no text item', retcode: j.retcode };
+                            return {
+                                ok: true,
+                                total_record_count: item.total_record_count,
+                                max_row: item.max_row,
+                                smartsheet: item.smartsheet,
+                                workbook: item.workbook || '[]',
+                            };
+                        } catch (e) {
+                            return { error: e.message };
+                        }
+                    }""",
+                    api_url,
+                )
+                if not fetch_result or fetch_result.get("error"):
+                    all_results.append({
+                        "sheet_id": sid, "sheet_name": sname,
+                        "success": False, "error": fetch_result.get("error") if fetch_result else "no response",
+                    })
+                    continue
+
+                # Python 端解码 base64+zlib
+                ss_raw = fetch_result["smartsheet"]
+                try:
+                    # 补齐 base64 padding
+                    padding = 4 - len(ss_raw) % 4
+                    if padding != 4:
+                        ss_raw += "=" * padding
+                    decoded = base64.urlsafe_b64decode(ss_raw)
+                    decompressed = zlib.decompress(decoded)
+                    parsed = json.loads(decompressed.decode("utf-8"))
+                except Exception as e:
+                    _auto_report(f"base64+zlib 解码失败 (sheet: {sname})",
+                                 str(e),
+                                 {"url": url, "sheet_id": sid, "sheet_name": sname, "step": "decode"})
+                    all_results.append({
+                        "sheet_id": sid, "sheet_name": sname,
+                        "success": False, "error": f"base64+zlib 解码失败: {e}",
+                    })
+                    continue
+
+                # parsed 可能是 [[items...]] 双层嵌套，取第一层
+                if parsed and isinstance(parsed[0], list):
+                    parsed = parsed[0]
+
+                # 提取列定义和选项映射
+                field_defs, select_options, user_map = _parse_column_defs(parsed)
+
+                # 提取行数据（t=3028 的 item）
+                records_raw = {}
+                for item in parsed:
+                    if item.get("t") == 3028:
+                        c = item.get("c", {})
+                        sub = c.get("2") or c.get("k2") or {}
+                        records_raw = sub.get("1") or sub.get("k1") or {}
+                        break
+
+                if not records_raw:
+                    all_results.append({
+                        "sheet_id": sid, "sheet_name": sname,
+                        "success": False, "error": "未找到行数据",
+                    })
+                    continue
+
+                # 转换为结构化记录
+                records = []
+                for rid, rdata in records_raw.items():
+                    cells = rdata.get("k1") or rdata.get("1") or {}
+                    record = {"_record_id": rid}
+                    for fid, fdef in field_defs.items():
+                        cell = cells.get(fid, {})
+                        so = select_options.get(fid) if fdef["type"] == _FIELD_TYPE_SELECT else None
+                        record[fdef["name"]] = _cell_value(cell, so, user_map)
+                    records.append(record)
+
+                all_results.append({
+                    "sheet_id": sid, "sheet_name": sname,
+                    "success": True,
+                    "records": records,
+                    "field_defs": {fid: d["name"] for fid, d in field_defs.items()},
+                    "total": len(records),
+                    "total_record_count": fetch_result.get("total_record_count", len(records)),
+                })
+
             await browser.close()
 
-        # 解析响应
-        if not fetch_result or fetch_result.get("error"):
-            return {"success": False, "error": f"dop-api 请求失败: {fetch_result}"}
-
-        # parsed 就是 [{t:3005,...}, {t:3028,...}] 结构
-        parsed = fetch_result.get("parsed", [])
-        if not parsed or not isinstance(parsed, list):
-            return {"success": False, "error": "dop-api 响应格式异常"}
-
-        # parsed 可能是 [[items...]] 双层嵌套，取第一层
-        if parsed and isinstance(parsed[0], list):
-            parsed = parsed[0]
-
-        # workbook（子表列表）
-        workbook = []
-        wb_str = fetch_result.get("workbook_json", "[]")
-        if isinstance(wb_str, str):
-            try:
-                workbook = json.loads(wb_str)
-            except:
-                pass
-        elif isinstance(wb_str, list):
-            workbook = wb_str
-
-        # 提取列定义和选项映射
-        field_defs, select_options, user_map = _parse_column_defs(parsed)
-
-        # 提取行数据（t=3028 的 item）
-        records_raw = {}
-        for item in parsed:
-            if item.get("t") == 3028:
-                c = item.get("c", {})
-                sub = c.get("2") or c.get("k2") or {}
-                records_raw = sub.get("1") or sub.get("k1") or {}
-                break
-
-        if not records_raw:
+        # 单子表模式：直接返回该子表结果
+        if len(all_results) == 1:
+            r = all_results[0]
+            if not r["success"]:
+                return {"success": False, "error": r["error"], "sheet_id": r["sheet_id"]}
             return {
-                "success": False,
-                "error": "未找到行数据（可能是空表或格式不兼容）",
-                "parsed_types": [item.get("t") for item in parsed[:10]],
+                "success": True,
+                "doc_type": "s3",
+                "records": r["records"],
+                "field_defs": r["field_defs"],
+                "sheet_id": r["sheet_id"],
+                "sheet_name": r["sheet_name"],
+                "workbook": workbook,
+                "total": r["total"],
             }
 
-        # 转换为结构化记录
-        records = []
-        for rid, rdata in records_raw.items():
-            cells = rdata.get("k1") or rdata.get("1") or {}
-            record = {"_record_id": rid}
-            for fid, fdef in field_defs.items():
-                cell = cells.get(fid, {})
-                so = select_options.get(fid) if fdef["type"] == _FIELD_TYPE_SELECT else None
-                record[fdef["name"]] = _cell_value(cell, so, user_map)
-            records.append(record)
-
+        # 多子表模式：返回所有子表结果
+        total_records = sum(r.get("total", 0) for r in all_results if r["success"])
+        failed = [r for r in all_results if not r["success"]]
         return {
-            "success": True,
+            "success": len(failed) == 0,
             "doc_type": "s3",
-            "records": records,
-            "field_defs": {fid: d["name"] for fid, d in field_defs.items()},
-            "select_options": select_options,
-            "user_map": user_map,
-            "sheet_id": sheet_id,
+            "sheets": [
+                {
+                    "sheet_id": r["sheet_id"],
+                    "sheet_name": r["sheet_name"],
+                    "records": r.get("records", []),
+                    "field_defs": r.get("field_defs", {}),
+                    "total": r.get("total", 0),
+                }
+                for r in all_results if r["success"]
+            ],
             "workbook": workbook,
-            "total": len(records),
+            "total_sheets": len(all_results),
+            "total_records": total_records,
+            "failed_sheets": failed if failed else None,
         }
 
     # ── 3d. 思维导图 dop-api ──────────────────────────────
@@ -2163,7 +2269,7 @@ def main():
     p_check = sub.add_parser("check", help="检查用户 cookies 是否有效")
     p_check.add_argument("user_id")
 
-    p_read = sub.add_parser("read", help="读取文档（自动路由：s3_→dop-api，其他→DOM）")
+    p_read = sub.add_parser("read", help="读取文档（自动路由：s3_/e3_/m4_→专用方案，其他→DOM）")
     p_read.add_argument("user_id")
     p_read.add_argument("url", help="企微文档 URL")
     p_read.add_argument("--sheet", default=None, help="指定子表 ID（仅智能表格）")

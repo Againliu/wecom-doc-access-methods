@@ -1,6 +1,6 @@
 ---
 name: wecom-doc-access-methods
-version: 4.1.1
+version: 4.2.0
 description: >
   企微文档读取 Skill。以下 4 种文档类型已通过完整实测验证：
   ① s3_ 智能表格 — dop-api 全量结构化读取，多子表自动遍历，select 选项映射，用户字段解析，2000 条以上全量获取；
@@ -16,7 +16,9 @@ description: >
 ## 适用场景
 
 - 需要读取企微智能表格（`s3_`）或微文档（`w3_`）的数据
-- MCP 授权过期（errcode 851014 / 2200063）需要兜底方案
+- **优先使用浏览器 dop-api 方案**（结构化 JSON，无列错位，全量数据）— 2026-06-29 建哥要求
+- MCP `get_doc_content` 仅用于快速浏览/简单场景（返回 Markdown，多子表时有 `|` 列错位风险）
+- MCP 授权过期（errcode 851014 / 2200063）时浏览器方案是唯一可用路径
 - 需要突破 MCP 2000 条硬限制获取全量数据
 - 需要给其他 Agent 系统集成企微文档读取能力
 
@@ -85,18 +87,18 @@ wecom_states/
 
 ## 方案速查
 
-| 方案 | 数据完整性 | 稳定性 | 写能力 | 维护成本 |
-|------|-----------|--------|--------|----------|
-| **MCP API** | ⚠️ 前2000条 | ✅ 高 | ✅ | 低（授权过期重分享） |
-| **Playwright + dop-api** | ✅ 全量 | ⚠️ 中（cookie ~2周） | ❌ | 中（定期扫码续期） |
+| 方案 | 推荐度 | 数据完整性 | 稳定性 | 写能力 | 维护成本 |
+|------|--------|-----------|--------|--------|----------|
+| **Playwright + dop-api** | **✅ 首选** | ✅ 全量 | ⚠️ 中（cookie ~2周） | ❌ | 中（定期扫码续期） |
+| **MCP API** | ⚠️ fallback | ⚠️ 前2000条 | ✅ 高 | ✅ | 低（授权过期重分享） |
 
-**推荐策略**：日常用 MCP（稳定+可写），MCP 不可用或需全量时切浏览器方案。
+**推荐策略**：**优先用浏览器 dop-api 方案**（结构化 JSON，无列错位风险，全量数据）。MCP `get_doc_content` 返回 Markdown 纯文本，多子表拼接时单元格内 `|` 字符导致列错位（2026-06-29 实测 24 子表技术工单表，31-39 列旧格式子表大量错位），仅作为快速浏览/简单场景的 fallback。需要写操作时用 MCP（浏览器方案只读）。
 
 ---
 
-## 方案一：MCP API
+## 方案二（fallback）：MCP API
 
-### 配置
+> ⚠️ 仅用于快速浏览/简单场景。返回 Markdown 纯文本，多子表时有 `|` 列错位风险（详见 Pitfalls）。需要写操作时也可用 MCP（浏览器方案只读）。
 
 ```yaml
 mcp_servers:
@@ -162,7 +164,7 @@ if result.get("task_id") and not result.get("task_done"):
 
 ---
 
-## 方案二：Playwright + dop-api（全量读取，生产验证）
+## 方案一（首选）：Playwright + dop-api（全量读取，生产验证）
 
 ### 原理
 
@@ -237,6 +239,31 @@ async def check_cookies(state_file):
 
 **Cookie 有效期**：约 2 周。核心 cookie 是 `wedoc_sid` 和 `wedoc_ticket`。
 
+### 主动提醒：cookie 到期前 2 天通知用户（2026-06-26 建哥要求）
+
+用户要求机器人在 cookie 过期前**主动提醒**扫码续期，而不是等过期了才发现。
+
+**生产环境 storage_state 路径**（本机实际使用，三个文件必须保持同步）：
+- `/root/.hermes/scripts/wecom_states/_shared.json` — 主力（`wecom_login.py` 扫码脚本写入此文件，所有检查脚本优先读此文件）
+- `/root/.hermes/workspace/wecom_browser_state.json` — 备用（同步脚本读此文件）
+- `/root/.hermes/workspace/wecom_cookies.json` — `wecom_auto_renew.py` 的 COOKIE_FILE（cron 续期检查用）
+- ⚠️ 三个文件必须同步更新！2026-06-27 踩坑：扫码续期后只更新前两个、漏了第三个 → cron 读旧文件发误告警
+
+**检查方法**：读 storage_state JSON → 遍历 cookies → 找 `wedoc_sid` 的 `expires` 字段（Unix 时间戳）→ 距过期 < 2 天则提醒用户。
+
+**续期命令**：
+```bash
+cd /root/.hermes/skills/devops/wecom-doc-access-methods/scripts
+python3 wecom_login.py --state /root/.hermes/scripts/wecom_states/_shared.json --qr /tmp/wecom_qr.png --timeout 300
+```
+QR 生成后通过企微发给用户扫码，扫完自动保存新 storage_state。同时复制到**所有三个**路径（缺一不可，否则 cron 监控读旧文件会误告警）：
+```bash
+cp /root/.hermes/scripts/wecom_states/_shared.json /root/.hermes/workspace/wecom_browser_state.json
+cp /root/.hermes/scripts/wecom_states/_shared.json /root/.hermes/workspace/wecom_cookies.json
+```
+
+可用 `scripts/check_cookie_expiry.py` 自动检查过期状态。
+
 ### 步骤 3：获取全量数据（两种方式）
 
 #### 方式 A：拦截页面自动加载的响应
@@ -275,11 +302,12 @@ async def fetch_via_intercept(state_file, doc_url):
     return json.loads(decompressed.decode('utf-8'))
 ```
 
-#### 方式 B：主动 fetch（推荐，startrow=0 返回 JSON 字符串）
+#### 方式 B：主动 fetch（推荐，需拦截 xsrf + 完整参数 + base64+zlib 解码）
 
 ```python
-async def fetch_via_active_fetch(state_file, doc_url, doc_id, sheet_id):
-    """主动 fetch dop-api startrow=0，smartsheet 字段是 JSON 字符串需 JSON.parse"""
+async def fetch_via_active_fetch(state_file, doc_url, doc_id, sheet_id=None):
+    """主动 fetch dop-api startrow=0，smartsheet 字段是 base64+zlib 压缩格式。
+    必须先拦截页面首次 get/sheet 请求获取 xsrf 等动态参数。"""
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
         context = await browser.new_context(storage_state=state_file)
@@ -287,40 +315,84 @@ async def fetch_via_active_fetch(state_file, doc_url, doc_id, sheet_id):
         await page.route("**/*.woff*", lambda r: r.abort())
         await page.route("**/*.ttf", lambda r: r.abort())
 
-        # 页面加载后 URL 可能自动追加 &tab=xxx，可从中提取 sheet_id
+        # ⚠️ 关键1：拦截页面首次 get/sheet 请求获取 xsrf 等动态参数
+        captured_params = None
+        def _on_req(req):
+            nonlocal captured_params
+            if 'dop-api/get/sheet' in req.url and not captured_params:
+                qs = parse_qs(urlparse(req.url).query)
+                captured_params = {k: v[0] for k, v in qs.items()}
+        page.on("request", _on_req)
+
         await page.goto(doc_url, wait_until='networkidle', timeout=60000)
-        await asyncio.sleep(3)
+        await asyncio.sleep(5)
+        if not captured_params:
+            return {"error": "未拦截到 get/sheet 请求，无法获取 xsrf"}
 
-        api_url = f"https://doc.weixin.qq.com/dop-api/get/sheet?padId={doc_id}&subId={sheet_id}&startrow=0&endrow=99999&outformat=1&normal=1"
-        # ⚠️ 关键：smartsheet 是 JSON 字符串，必须在 JS 端 JSON.parse
-        result = await page.evaluate("""async (url) => {
-            const r = await fetch(url, {credentials: 'include'});
-            const j = await r.json();
-            const item = j?.data?.initialAttributedText?.text?.[0];
-            if (!item) return { error: 'no text item' };
-            const ss = item.smartsheet;
-            if (!ss) return { error: 'no smartsheet field' };
-            let parsed;
-            try { parsed = JSON.parse(ss); } catch(e) { return { error: 'parse failed' }; }
-            return {
-                ok: true,
-                total_record_count: item.total_record_count,
-                workbook_json: item.workbook || '[]',
-                parsed: parsed,  // [{t:3005,...}, {t:3028,...}]
-            };
-        }""", api_url)
+        xsrf = captured_params.get("xsrf", "")
+        rev = captured_params.get("rev", "")
 
+        # 从 collab_client_vars 获取 workbook（子表列表）
+        workbook = await page.evaluate("""() => {
+            const ccv = window.clientVars?.collab_client_vars;
+            if (!ccv) return null;
+            const iat = ccv.initialAttributedText;
+            if (!iat || !iat.text || !iat.text[0]) return null;
+            return iat.text[0].workbook ? JSON.parse(iat.text[0].workbook) : null;
+        }""")
+
+        # 确定子表列表
+        all_sheets = [s for s in (workbook or []) if s.get("type") == "smartsheet"]
+        target_sheets = [s for s in all_sheets if s["id"] == sheet_id] if sheet_id else all_sheets
+
+        results = []
+        for sh in target_sheets:
+            # ⚠️ 关键2：必须用完整参数集，不能只用最简参数
+            api_url = (
+                f"https://doc.weixin.qq.com/dop-api/get/sheet"
+                f"?padId={doc_id}&subId={sh['id']}"
+                f"&startrow=0&endrow=99999&xsrf={xsrf}"
+                f"&outformat=1&normal=1&nowb=1&needSheetState=2"
+                f"&rev={rev}&optimizedVer=2"
+                f"&chunkCellSize=15000&enableChunkRank=1&enablePermOpt=0"
+            )
+            # JS 端返回原始 smartsheet 字符串（base64+zlib），不在此解析
+            result = await page.evaluate("""async (url) => {
+                const r = await fetch(url, {credentials: 'include'});
+                const j = await r.json();
+                const item = j?.data?.initialAttributedText?.text?.[0];
+                if (!item) return { error: j.errmsg || 'no text item' };
+                return {
+                    ok: true,
+                    total_record_count: item.total_record_count,
+                    smartsheet: item.smartsheet,  // base64+zlib 原始字符串
+                };
+            }""", api_url)
+            if result.get("ok"):
+                # ⚠️ 关键3：Python 端解码 base64+zlib
+                ss_raw = result["smartsheet"]
+                padding = 4 - len(ss_raw) % 4
+                if padding != 4: ss_raw += "=" * padding
+                decoded = base64.urlsafe_b64decode(ss_raw)
+                decompressed = zlib.decompress(decoded)
+                parsed = json.loads(decompressed.decode("utf-8"))
+                # parsed 可能双层嵌套 [[items...]]，取第一层
+                if parsed and isinstance(parsed[0], list): parsed = parsed[0]
+                results.append({"sheet": sh["name"], "parsed": parsed})
         await browser.close()
-        return result
+        return results
 ```
 
-**⚠️ 关键纠正（2026-06-13 实测）**：
-- `startrow=0` 必须传，否则只拿 startrow=61+ 的部分
-- 返回结构是 `{data: {initialAttributedText: {text: [{smartsheet: "JSON字符串", workbook: "JSON字符串", total_record_count: N, max_row: N}]}}}`
-- `text[0]` **不是**直接的 `{t:3005, c:{...}}` 数组，而是 `{smartsheet: "...", workbook: "..."}` 包装
-- `smartsheet` 字段是 **JSON 字符串**（需 `JSON.parse()`），**不是** base64+zlib 压缩（那是 startrow=61+ 拦截方式）
-- `JSON.parse()` 后得到 `[{t:3005,...}, {t:3028,...}]` 结构（可能双层嵌套 `[[items...]]`）
+**⚠️ 关键纠正（2026-06-29 实测，推翻 2026-06-13 的错误结论）**：
+- `startrow=0` 主动 fetch 返回的 `smartsheet` 字段是 **base64+zlib 压缩格式**（以 `eJ` 开头），**不是** JSON 字符串
+- 之前认为 "startrow=0 返回 JSON 字符串、startrow=61+ 返回 base64+zlib" 是**错误的**，两种方式返回的都是 base64+zlib
+- 解码方式：`base64.urlsafe_b64decode` + `zlib.decompress` + `json.loads`（与拦截方式完全一致）
+- **必须传完整参数集**：`xsrf`, `needSheetState=2`, `rev`, `optimizedVer=2`, `chunkCellSize=15000`, `enableChunkRank=1`, `enablePermOpt=0`。只传 `padId+subId+startrow+endrow+outformat+normal` 会返回 `retcode 538002: "Get content error"`
+- `xsrf` 和 `rev` 是动态参数，必须从页面首次 `get/sheet` 请求中拦截获取，不能硬编码
+- 多子表：不需要切换 tab，用同一套参数+不同 `subId` 即可 fetch 所有子表
+- 从 `collab_client_vars.initialAttributedText.text[0].workbook` 获取子表列表（JSON 字符串需 `JSON.parse`）
 - `endrow=99999` 不影响性能，API 自动返回实际全量
+- `text[0]` 是包装对象 `{smartsheet: "base64+zlib...", workbook: "JSON字符串", total_record_count: N, max_row: N}`
 
 ### 微文档 w3_ 读取（opendoc API）
 
@@ -343,7 +415,9 @@ async def fetch_via_active_fetch(state_file, doc_url, doc_id, sheet_id):
 | 来源 | 格式 | 行数据路径 | 是否需要解压 |
 |------|------|-----------|-------------|
 | 页面自动加载 | base64+zlib（k前缀键） | `parsed[0][0].c.k2.k1` | ✅ urlsafe_b64decode + zlib |
-| 主动 fetch | 纯 JSON（数字键） | `parsed[0][1].c.2.1` 或直接 `.c.2.1` | ❌ |
+| 主动 fetch | base64+zlib（k前缀键） | 解码后找 t=3028 → `.c.k2.k1` | ✅ urlsafe_b64decode + zlib |
+
+**⚠️ 两种来源返回格式一致**：都是 base64+zlib 压缩，解码后都是 k 前缀键结构。不要假设主动 fetch 返回"纯 JSON"（2026-06-29 实测推翻此错误结论）。
 
 **字段值提取**：
 
@@ -463,16 +537,57 @@ workbook = json.loads(workbook_json)
 - ⚠️ 页面默认加载的 `get/sheet` 只含 startrow=61+ 的部分
 - ✅ 主动 fetch 时必须传 `startrow=0` 才能拿全量
 - ✅ endrow 设多大（99999）都不影响性能
+- ⚠️ **startrow=0 返回的 smartsheet 字段是 base64+zlib 压缩格式**（2026-06-29 实测推翻之前错误结论），不是 JSON 字符串，需 `urlsafe_b64decode + zlib.decompress + json.loads`
+- ⚠️ **主动 fetch 必须传完整参数集**：`xsrf`, `needSheetState=2`, `rev`, `optimizedVer=2`, `chunkCellSize=15000`, `enableChunkRank=1`, `enablePermOpt=0`。只传最简参数（padId+subId+startrow+endrow+outformat+normal）返回 `retcode 538002: "Get content error"`
+- ⚠️ **xsrf 和 rev 是动态参数**，必须拦截页面首次 `get/sheet` 请求获取，不能硬编码
+- ✅ **多子表不需要切换 tab**：从 `collab_client_vars.initialAttributedText.text[0].workbook` 获取子表列表后，用同一套参数+不同 `subId` 即可 fetch 所有子表
 
 ### Cookie / 登录相关
 - ⚠️ 必须用 `storage_state`（Playwright 完整状态），不是纯 cookies
 - ⚠️ cookie 约 2 周过期，需要定期检查和续期
 - ⚠️ 不能直接 HTTP POST dop-api（需要页面上下文中的 xsrf token），必须通过 Playwright 页面导航触发
+- ⚠️ **"扫码续期" 语境歧义**（2026-06-26 踩坑）：用户说"扫码续期"时，先确认是哪个系统——① 浏览器 cookie（storage_state，~2周过期）② MCP 机器人授权（errcode 851014，不定期过期）③ 飞书 token（自动续期，不需要手动）。不要默认跳到飞书 token
+- ⚠️ **QR 码图片格式**（2026-06-26 踩坑）：Playwright 拦截到的企微登录二维码是 **1-bit grayscale PNG**，企微客户端**无法渲染**会显示裂图。必须转 RGB 再发送：`Image.open(qr).convert('RGB').resize((800,800), Image.NEAREST).save(qr_v2)`
+- ⚠️ **MCP errcode 区分**（2026-06-26 实测）：监控检测时区分三种 errcode——851014/2200063=授权过期（需告警）；851003=无此文档权限但授权有效（正常）；851000=无效URL但授权有效（正常）。检测脚本应用 smartsheet_get_sheet + 假URL，只有 851014/2200063 才告警
+- ✅ **主动续期提醒**（2026-06-26 用户要求）：cookie 到期前 2 天主动提醒用户扫码；MCP 授权过期即时告警。用 `scripts/wecom_doc_auth_check.py` + crontab 每日检测，有异常才输出（静默=正常）
+- ⚠️ **🚨 三个 cookie 文件必须同步**（2026-06-27 踩坑 — 误告警根因）：生产环境有**三个** cookie 文件，扫码续期后必须**全部更新**，否则监控 cron 读到旧文件会发误告警：
+  - `/root/.hermes/scripts/wecom_states/_shared.json` — **主力**（`wecom_login.py` 扫码脚本写入此文件）
+  - `/root/.hermes/workspace/wecom_browser_state.json` — **备用**（同步脚本 `monitor_wecom_sync.py` 读此文件）
+  - `/root/.hermes/workspace/wecom_cookies.json` — **`wecom_auto_renew.py` 读此文件**（cron 续期检查用）
+  - **踩坑场景**：6/26 晚扫码续期只更新了 `_shared.json` + `wecom_browser_state.json`，漏了 `wecom_cookies.json` → 6/27 早 09:00 cron 读旧文件报"剩余 1.6 天"误告警 → 用户困惑"昨晚刚搞过怎么又要搞"
+  - **修复**：`wecom_auto_renew.py` 改为优先读 `_shared.json`（fallback 到 `wecom_cookies.json`），续期时同时写两个文件
+  - **铁规**：任何 cookie 更新操作（扫码续期 / `wecom_login.py` / `wecom_auto_renew.py`）后，必须验证三个文件的 `wedoc_sid` expires 时间一致
+
+### 🚨 不要混淆三种认证机制（2026-06-26 踩坑）
+企微文档相关有**三套独立的认证**，用户说"续期/授权"时要先判断是哪个：
+
+| 认证机制 | 作用 | 过期表现 | 续期方式 |
+|---------|------|---------|---------|
+| **飞书 token** (lark-cli) | 飞书 API 操作 | `expiresAt` 到期 | `feishu_token_keepalive.py` 自动续期，**不需手动** |
+| **企微 MCP 授权** (errcode 851014) | MCP 工具调企微文档 API | errcode 851014 | 用户在企微点授权链接重新授权机器人 |
+| **企微浏览器 cookie** (storage_state) | Playwright + dop-api 全量读取 | cookie 跳转登录页 | `wecom_login.py` 扫码登录，**约 2 周过期** |
+
+**判断顺序**：用户说"续期"→ 先想是哪套 → 飞书 token 有自动续期不用管 → MCP 报 851014 才是 MCP 授权 → 用户说"扫码"多半是浏览器 cookie → 不确定就问，不要猜。
+**踩坑场景**：用户说"扫码续期"，我误启动飞书 lark-cli QR 登录，用户纠正"不是飞书 token，是企微文档"。
 
 ### crontab 环境
 - ⚠️ crontab PATH 极简（`/usr/bin:/bin`），调外部 CLI（如 lark-cli shebang `#!/usr/bin/env node`）会报 `No such file or directory`
 - ✅ 修复：脚本内显式注入 PATH 到 `subprocess.run` 的 `env` 参数
 - ⚠️ crontab 分钟避开整点（用 :07/:13/:17/:23/:37/:43），整点是 API 调用高峰
+
+### Hermes cron `no_agent=true` script 参数（2026-06-27 踩坑 — cron 自创建以来一直 error）
+- ⚠️ `no_agent=true` 的 cron job，`script` 参数必须是**相对文件名**（如 `wecom_doc_auth_check.py`），不是 shell 命令（如 `python3 /root/.hermes/scripts/wecom_doc_auth_check.py 2>&1`）
+- ❌ 写成 shell 命令时，cron 框架把整个字符串当文件路径找 → `Script not found: /root/.hermes/scripts/python3 /root/...` → `last_status: "error"` 静默失败
+- ✅ 正确写法：`script: "wecom_doc_auth_check.py"`（相对于 `~/.hermes/scripts/`）
+- ⚠️ `.sh`/`.bash` 后缀走 bash 执行，其他后缀（`.py`）走 Python 执行
+- ⚠️ 这种错误**不会告警**——cron 正常 schedule 但每次执行都失败，只有手动查 `last_status` 或看 `~/.hermes/cron/output/<job_id>/` 下的日志才发现
+
+### Cron 合并原则（2026-06-27 踩坑 — 两个 cron 功能重叠）
+- ⚠️ 不要为同一个检查创建多个 cron——如一个 LLM 驱动（`wecom_auto_renew.py` 检查 cookie）+ 一个纯脚本（`wecom_doc_auth_check.py` 检查 cookie + MCP），功能重叠，前者还浪费 LLM token
+- ✅ 合并为一个纯脚本 cron（`no_agent=true`），覆盖所有检查项（cookie 过期 + MCP 授权）
+- ✅ LLM 驱动的 cron 只用于需要推理的任务（如反思、分析），简单检查用纯脚本
+- ⚠️ cron 里的自动续期功能（生成 QR + 等待扫码）在无人值守场景不实用——用户不一定在线。改为：cron 检测异常 → 推送告警 → 用户看到后主动触发续期
+- ✅ 发现多个 cron 功能重叠时，自行分析合理性并合并，不要把决策抛给用户
 
 ### lark-cli 读写参数
 - ⚠️ **读取**（`+record-list`）**必须加 `--format json`**，否则返回 markdown 表格，`json.loads` 失败（`Expecting value: line 1 column 1`）
@@ -545,6 +660,17 @@ workbook = json.loads(workbook_json)
 - ❌ `async with async_playwright as p:` — 报错 `TypeError: 'function' object does not support the asynchronous context manager protocol`
 - ✅ `async with async_playwright() as p:` — 正确用法（需要调用函数获取 context manager）
 
+### 🚨 MCP get_doc_content 多子表 Markdown 解析（2026-06-29 踩坑 — 技术工单表 24 子表实测）
+- **场景**：用 MCP `get_doc_content(type=2)` 读取含多个子表的智能表格，返回的是所有子表拼接的 Markdown 纯文本
+- **🚨 陷阱 1 — 不同子表列数不同**：同一个文档的 24 个子表有三种列结构（25列旧格式 / 31-39列过渡格式 / 12-14列新格式）。用固定列数解析会导致数据丢失或列错位。**必须逐个子表独立解析表头**。
+- **🚨 陷阱 2 — `|` 字符导致列错位**：Markdown 表格用 `|` 分隔列，但单元格内容含 `|`（如"模块A|模块B"）会拆出额外列。31-39列旧格式子表受影响最严重（问题描述列经常含 `|`）。**缓解**：检测行 cell 数 > 表头列数时合并多余列；大量行受影响时考虑替换 `|` 为制表符后 CSV 解析；报告中标注"此子表分类不准"。
+- **🚨 陷阱 3 — 排序子表标记后解析会破坏边界**：`grep -n '^## '` 拿到标记后，**不能先排序再计算范围**。排序后相邻标记在原文中不相邻，`end_line = 下一个标记行号 - 1` 可能 < `start_line`，产生空范围。**正确流程**：保持原始顺序计算范围 → 逐表解析 → 解析完成后再排序输出。
+- **陷阱 4 — 重复子表**：实测发现某些子表数据完全重复（工单ID一致）。需检测并在报告中标注，不计入总数。
+- **陷阱 5 — 列名模糊匹配**：不同格式子表列名不同但语义相同（"故障模块" vs "产品模块"）。用 `in` 或正则模糊匹配，不要求精确匹配。
+- **用户纠正**：用户指出"他不是很多子表吗，按子表来梳理" — 不要只按第一个子表的格式解析全部数据，必须识别多子表结构并逐表处理。
+- **适用场景**：`get_doc_content` 适合快速浏览/分析/分类汇总；精确同步用 `smartsheet_get_records`（JSON，无列错位风险）。
+- 详见 `references/mcp-get-doc-content-multisheet-parsing.md`（含解析脚本模板 + 数据质量检查清单 + 与 smartsheet_get_records 对比表）
+
 ### 验证充分性原则（2026-06-15 用户纠正）
 - ❌ 不要只测一个子表就声称"全部成功"
 - ✅ 多子表文档必须全量遍历验证，逐个报告每个子表的行数/列数/合并单元格数
@@ -584,6 +710,75 @@ workbook = json.loads(workbook_json)
 | 851003 | 文档类型不支持（blankpage） | 用浏览器方案 |
 | cookie 过期 | 页面跳转到 login | 重新扫码登录 |
 | base64 解码失败 | invalid characters | 换 urlsafe_b64decode + 加 padding |
+| retcode 538002 | dop-api "Get content error" | 主动 fetch 缺少必要参数（xsrf/rev/needSheetState等），需拦截页面首次请求获取完整参数集 |
+
+---
+
+## 测试方案
+
+### 单元测试（离线，不需要浏览器）
+
+```bash
+cd scripts/
+python3 test_wecom_doc_reader.py --offline
+```
+
+覆盖：URL 解析、base64+zlib 解码（含 padding 边界）、列定义解析（k前缀/数字键）、select 选项提取。
+
+### 集成测试（在线，需要浏览器+cookie）
+
+```bash
+cd scripts/
+python3 test_wecom_doc_reader.py --state-dir /path/to/wecom_states --user _shared --url "https://doc.weixin.qq.com/smartsheet/s3_xxx"
+```
+
+覆盖：单子表读取、多子表读取（24+子表）、错误处理（无效URL/不存在文档）、性能测试（记录数/耗时）。
+
+### 测试维度
+
+| 维度 | 测试点 | 验证方法 |
+|------|--------|----------|
+| URL 解析 | s3_/w3_/e3_/m4_ 格式 + scode/tab 参数 | `parse_doc_url()` 返回值断言 |
+| 解码 | base64 roundtrip + padding 补齐 + 无效数据 | 编码→解码对比 |
+| 列定义 | k前缀/数字键 + select 选项 + 字段类型 | `_parse_column_defs()` 返回值 |
+| 单子表 | 指定 tab 读取 + 记录数 + 字段数 + 首条记录 | `read(user, url+tab)` |
+| 多子表 | 全量子表 + sheets 数组 + 记录总数一致 + 无空表 | `read(user, url)` |
+| 错误处理 | 无效URL + 不存在文档 + 异常捕获 | 返回 `success: False` |
+| 性能 | 24子表读取耗时 < 120s | 计时断言 |
+
+---
+
+## GitHub Issue 自动反馈机制
+
+### 原理
+
+skill 在遇到关键错误时，自动在 GitHub 仓库创建 issue（带 `auto-reported` label），实现"问题→反馈→修复"闭环。
+
+### 配置
+
+```bash
+# 环境变量（必须）
+export GITHUB_TOKEN="ghp_xxx"           # GitHub API token
+export GITHUB_REPO="Againliu/wecom-doc-access-methods"  # 仓库（可选，有默认值）
+export ISSUE_AUTO="1"                    # 1=自动提交, 0=只打印不提交
+```
+
+### 自动触发点
+
+| 触发条件 | issue 标题 |
+|---------|-----------|
+| 未拦截到 get/sheet 请求 | "dop-api 未拦截到 get/sheet 请求" |
+| base64+zlib 解码失败 | "base64+zlib 解码失败 (sheet: xxx)" |
+| 其他关键异常 | 按错误类型自动生成 |
+
+### 去重
+
+提交前用 GitHub Search API 检查是否已有同名 open issue，避免重复提交。
+
+### 文件
+
+- `scripts/report_issue.py` — 独立可用的 issue 自动反馈脚本
+- `scripts/test_wecom_doc_reader.py` — 完备测试套件（7 大维度）
 
 ---
 
@@ -598,16 +793,51 @@ workbook = json.loads(workbook_json)
 - `references/m4-mind-extraction.md` — **m4_ 思维导图读取**（JSON 节点树递归提取）
 - `references/wecom-messaging.md` — **WeCom 消息媒体发送指南**
 - `references/wecom-media-delivery-debug.md` — **企微图片交付排错指南**
+- `references/mcp-get-doc-content-multisheet-parsing.md` — **🆕 MCP get_doc_content 多子表 Markdown 解析**（不同子表列数不同、`|`字符列错位、排序破坏边界、重复子表检测、列名模糊匹配、解析脚本模板）
 - `scripts/wecom_login.py` — 扫码登录脚本（生成 QR 码 + 保存 storage_state）
+- `scripts/check_cookie_expiry.py` — **🆕 cookie 过期检查**（检查 wedoc_sid/wedoc_ticket 剩余天数，距过期 ≤2 天输出警告，供 cron 主动提醒）
 - `scripts/wecom_reader.py` — 通用读取工具（check / fetch / fetch-sheet）
 - `scripts/wecom_fetch.py` — 简化版 dop-api fetch
 - `scripts/validate_extraction.py` — **🆕 提取结果 ground-truth 验证**（导出子表前 N 行为 CSV，对照原始文档逐列检查）
+- `scripts/wecom_doc_auth_check.py` — **🆕 授权状态定时检测**（cookie 过期预警 + MCP 851014 告警，crontab 每日跑，有异常才输出）
 
 ---
 
 ## 更新日志
 
-- **2026-06-16** (v4.1.0): 🧠 **新增 m4_ 思维导图完整支持**
+- **2026-06-29** (v4.1.5): 🔄 **推荐策略调整 — 浏览器 dop-api 上升为首选方案**
+  - **用户要求**：建哥明确指示"以后优先用 wecom-doc-access-methods skill 获取微文档内容"（指浏览器 dop-api 方案）
+  - **调整内容**：
+    - "方案速查"表格新增"推荐度"列，Playwright dop-api 标为 ✅ 首选，MCP 标为 ⚠️ fallback
+    - 方案编号调整：Playwright dop-api → 方案一（首选），MCP → 方案二（fallback）
+    - 方案标题加注：（首选）/（fallback）
+    - MCP 方案说明加警告：仅用于快速浏览/简单场景，多子表有 `|` 列错位风险
+    - "适用场景"更新：第一条明确"优先使用浏览器 dop-api 方案"
+  - **背景**：MCP `get_doc_content` 返回 Markdown 纯文本，技术工单表 24 子表实测中 31-39 列旧格式子表因 `|` 字符大量列错位。dop-api 返回结构化 JSON 无此问题。
+  - **注**：写操作仍用 MCP（浏览器方案只读）
+- **2026-06-29** (v4.1.4): 📄 **MCP get_doc_content 多子表 Markdown 解析 pitfalls + 参考文档**
+  - **新增 Pitfall**：MCP `get_doc_content(type=2)` 返回多子表拼接 Markdown 时的 5 个陷阱
+  - **陷阱 1**：不同子表列数不同（同一文档 24 子表有 3 种列结构：25列/31-39列/12-14列），必须逐表独立解析表头
+  - **陷阱 2**：单元格内 `|` 字符导致 Markdown 列错位，31-39列旧格式子表受影响最严重
+  - **陷阱 3**：排序子表标记后再计算范围会破坏边界（排序后相邻标记在原文不相邻，end_line 可能 < start_line）
+  - **陷阱 4**：重复子表检测（实测发现两个子表数据完全重复）
+  - **陷阱 5**：列名模糊匹配（"故障模块" vs "产品模块"）
+  - **新增参考文档** `references/mcp-get-doc-content-multisheet-parsing.md`：含解析脚本模板、数据质量检查清单、与 smartsheet_get_records 对比表
+  - **背景**：用户要求按子表（日期段）梳理技术工单表中 App 相关问题。初次解析只按第一个子表格式处理，遗漏大量数据；后续按时间排序后解析，边界计算错误产出 10000+ 条假数据；最终按原始顺序逐表解析才正确
+- **2026-06-27** (v4.1.3): 🔧 **三文件同步 pitfall + 误告警根因修复 + cron 脚本路径修复 + 冗余 cron 合并**
+  - **新增 Pitfall**：三个 cookie 文件（`_shared.json` / `wecom_browser_state.json` / `wecom_cookies.json`）必须同步更新
+  - **踩坑场景**：扫码续期只更新了前两个文件，漏了 `wecom_cookies.json` → cron 读旧文件报"剩余 1.6 天"误告警 → 用户困惑
+  - **修复**：`wecom_auto_renew.py` 改为优先读 `_shared.json`，续期时同时写两个文件
+  - **铁规**：任何 cookie 更新操作后，必须验证三个文件的 `wedoc_sid` expires 时间一致
+  - **更新续期命令**：`cp` 从 2 个文件改为 3 个文件
+  - **新增 Pitfall**：Hermes cron `no_agent=true` 的 `script` 参数必须是**相对文件名**（如 `wecom_doc_auth_check.py`），不是 shell 命令。写成 shell 命令会导致 `Script not found` 静默失败（cron `693f2df31eb8` 自创建以来一直 error）
+  - **新增 Pitfall**：不要为同一检查创建多个 cron。删除冗余的 LLM 驱动 cookie 检查 cron（`327db8642204`），保留纯脚本 cron（`693f2df31eb8`）统一检查 cookie + MCP 授权
+- **2026-06-26** (v4.1.2): 🔧 **认证机制区分 + cookie 主动提醒**
+  - **新增 Pitfall**: 不要混淆三种认证机制（飞书 token / 企微 MCP 授权 851014 / 企微浏览器 cookie storage_state）— 踩坑场景：用户说"扫码续期"，误启动飞书 lark-cli QR 登录，实际是企微浏览器 cookie 续期
+  - **新增主动提醒机制**: cookie 到期前 2 天主动通知用户扫码续期（建哥要求机器人及时提醒）
+  - **新增生产环境 storage_state 路径**: `/root/.hermes/scripts/wecom_states/_shared.json`（主力）+ `/root/.hermes/workspace/wecom_browser_state.json`（备用）
+  - **新增脚本** `scripts/check_cookie_expiry.py`: 检查 cookie 剩余天数，距过期 ≤N 天输出警告，供 cron 主动提醒
+  - **背景**: 企微文档浏览器 cookie 约 2 周过期，之前没有主动提醒机制，总是等过期了才发现
   - **新增 `_read_mind` 方法**：通过 `dop-api/get/mind` API 提取完整 JSON 节点树
   - **路由**：`read()` 方法自动识别 `m4_` 前缀，路由到 `_read_mind`
   - **实测修正**：`initialAttributedText.text` 是 JSON 字符串（非数组），结构为 `{content: [{rootTopic: {...}}]}`
@@ -707,10 +937,18 @@ workbook = json.loads(workbook_json)
   - 新增 `references/wecom-messaging.md` — WeCom 图片/文件发送完整指南
   - 新增 `references/wecom-messaging.md` 指针到支持文件列表
 - **2026-05-28**：
-  - **关键修正**: `startrow=0` 主动 fetch 返回的 `text[0].smartsheet` 是 **JSON 字符串**（需 `JSON.parse()`），不是直接的数组也不是 base64+zlib。`text[0]` 是包装对象 `{smartsheet, workbook, total_record_count, max_row}`
+  - ~~`startrow=0` 主动 fetch 返回的 `text[0].smartsheet` 是 **JSON 字符串**（需 `JSON.parse()`）~~ — **2026-06-29 推翻：实际是 base64+zlib 压缩格式，需 `urlsafe_b64decode + zlib.decompress`**
   - 新增企微文档完整类型列表（7 种：DOC/SHEET/SMARTSHEET/FORM/SLIDE/MIND/FLOWCHART）
   - 新增用户隔离架构章节（多用户 Agent 系统必做）
-  - 修正"方式 B"代码示例，展示正确的 JS 端 JSON.parse + Python 端解析流程
-  - 更新 dop-api-data-structure.md 参考文档，新增格式 A（startrow=0 JSON 字符串）
+  - 更新 dop-api-data-structure.md 参考文档
 - **v2.0.0 (2026-06-13)**: 整合 wecom-smartsheet-browser-sync + dop-api-data-structure，去除项目特定内容，改为通用 skill
 - **v1.0.0 (2026-05-28)**: 初始版本
+- **2026-06-29** (v4.2.0):
+  - **重大修正**：`startrow=0` 主动 fetch 返回的 `smartsheet` 字段是 **base64+zlib 压缩格式**（以 `eJ` 开头），不是 JSON 字符串。推翻 v2.0.0 (2026-06-13) 的错误结论
+  - **关键发现**：主动 fetch 必须传完整参数集（`xsrf`, `needSheetState=2`, `rev`, `optimizedVer=2`, `chunkCellSize=15000`, `enableChunkRank=1`, `enablePermOpt=0`），否则返回 `retcode 538002`
+  - **xsrf 获取方案**：拦截页面首次 `get/sheet` 请求的 URL 参数获取，不能硬编码
+  - **多子表方案**：从 `collab_client_vars.initialAttributedText.text[0].workbook` 获取子表列表，用同一套参数+不同 `subId` 遍历所有子表，不需要切换 tab
+  - **bug 修复**：`_parse_column_defs` 中 `k3 = k17.get("3") or k3.get("k3")` → 修正为 `k17.get("k3")`（typo 导致 UnboundLocalError）
+  - `wecom_doc_reader.py` `_read_smartsheet` 方法完全重写：拦截参数 → 获取 workbook → 遍历子表 → base64+zlib 解码 → 结构化输出
+  - 新增多子表返回格式（`sheets` 数组），单子表保持向后兼容
+  - SKILL.md 方式 B 代码示例和说明完全更新
