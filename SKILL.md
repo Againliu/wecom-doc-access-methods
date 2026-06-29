@@ -1,6 +1,6 @@
 ---
 name: wecom-doc-access-methods
-version: 4.2.0
+version: 4.1.5
 description: >
   企微文档读取 Skill。以下 4 种文档类型已通过完整实测验证：
   ① s3_ 智能表格 — dop-api 全量结构化读取，多子表自动遍历，select 选项映射，用户字段解析，2000 条以上全量获取；
@@ -415,9 +415,7 @@ async def fetch_via_active_fetch(state_file, doc_url, doc_id, sheet_id=None):
 | 来源 | 格式 | 行数据路径 | 是否需要解压 |
 |------|------|-----------|-------------|
 | 页面自动加载 | base64+zlib（k前缀键） | `parsed[0][0].c.k2.k1` | ✅ urlsafe_b64decode + zlib |
-| 主动 fetch | base64+zlib（k前缀键） | 解码后找 t=3028 → `.c.k2.k1` | ✅ urlsafe_b64decode + zlib |
-
-**⚠️ 两种来源返回格式一致**：都是 base64+zlib 压缩，解码后都是 k 前缀键结构。不要假设主动 fetch 返回"纯 JSON"（2026-06-29 实测推翻此错误结论）。
+| 主动 fetch | 纯 JSON（数字键） | `parsed[0][1].c.2.1` 或直接 `.c.2.1` | ❌ |
 
 **字段值提取**：
 
