@@ -17,7 +17,7 @@ WeCom documents come in **10+ types**, each requiring a different access method.
 
 | Type | URL Prefix | Read Method | Data Quality | Verified |
 |------|-----------|-------------|-------------|----------|
-| **Smart Table** (智能表格) | `s3_` | dop-api: full structured extraction | ✅ Complete fields, options, user refs | ✅ |
+| **Smart Table** (智能表格) | `s3_` | dop-api: full structured extraction (base64+zlib decoded) | ✅ Complete fields, options, user refs | ✅ |
 | **Spreadsheet** (电子表格) | `e3_` | Native JS API: `getCellDataAtPosition()` memory read | ✅ Exact merged cells, image URLs, dates | ✅ |
 | **Micro-Doc** (微文档) | `w3_` | opendoc API: full content extraction | ✅ Complete body text with formatting | ✅ |
 | **Mind Map** (思维导图) | `m4_` | dop-api/get/mind: recursive JSON tree | ✅ Complete node hierarchy | ✅ |
@@ -33,12 +33,15 @@ WeCom documents come in **10+ types**, each requiring a different access method.
 
 | Data | Details |
 |------|---------|
-| All sheets | Automatic multi-sheet traversal, no sheet limit |
+| All sheets | Automatic multi-sheet traversal via workbook metadata, no tab switching needed |
 | All fields | Field name, type (text/number/select/date/user/image/URL…) |
 | Select options | Option ID → display value mapping (single-select and multi-select) |
 | User fields | User ID resolution to display names |
 | Row data | **Unlimited rows** (bypasses MCP's 2,000 row limit) |
 | Images | Image field URLs preserved |
+| Decoding | base64 urlsafe + zlib decompress → JSON (not raw JSON string) |
+
+**Technical depth**: Smart sheet cells are returned as base64-encoded zlib-compressed JSON (prefix `eJ`). The reader intercepts the page's initial `get/sheet` request to obtain dynamic `xsrf` and `rev` parameters, then fetches each sub-sheet with the complete parameter set (`xsrf`, `needSheetState=2`, `rev`, `optimizedVer=2`, `chunkCellSize=15000`, `enableChunkRank=1`, `enablePermOpt=0`). Missing any parameter returns retcode 538002.
 
 ### Spreadsheets (`e3_`) — Memory-Level Cell Access
 
@@ -49,8 +52,6 @@ WeCom documents come in **10+ types**, each requiring a different access method.
 | Images | Original URLs via `getExtendedValue()` (e.g. `https://wdcdn.qpic.cn/...?w=4096`) |
 | Dates | Automatic Excel serial number → ISO date conversion |
 | Multiple sheets | Tab-by-tab reading with lazy-load handling (click + 5s wait) |
-
-**Technical depth**: This uses the WeCom spreadsheet engine's **native JavaScript API** (`SpreadsheetApp`), not clipboard scraping or API hacks. The previous v2.x approach assumed dop-api returned JSON — it actually returns protobuf binary and never worked. v3.1's native JS API reads directly from memory, making it the most reliable and complete method.
 
 ### Micro-Docs (`w3_`) — Full Content Extraction
 
@@ -72,20 +73,50 @@ WeCom documents come in **10+ types**, each requiring a different access method.
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/wecom_doc_reader.py` | **Main reader** — auto-detects document type (s3_/e3_/w3_/m4_) and uses the appropriate method |
+| `scripts/wecom_doc_reader.py` | **Main reader** (v4.2.0) — auto-detects document type (s3_/e3_/w3_/m4_) and uses the appropriate method |
 | `scripts/wecom_fetch.py` | Low-level fetch utilities for dop-api and opendoc endpoints |
+| `scripts/wecom_login.py` | QR-code login script — generates QR image + saves browser storage_state for cookie-based auth |
+| `scripts/check_cookie_expiry.py` | Checks cookie expiry time in storage_state files, alerts before expiration |
+| `scripts/validate_extraction.py` | Data validation utility — checks for empty fields, type mismatches, structural issues |
+| `scripts/wecom_doc_auth_check.py` | MCP authorization status checker — detects errcode 851014/851003 before reading |
 | `scripts/wecom_reader.py` | Legacy reader (deprecated — use `wecom_doc_reader.py` instead) |
+| `scripts/test_wecom_doc_reader.py` | **Test suite** — 19 offline tests covering URL parsing, field decoding, data extraction, error handling |
+| `scripts/report_issue.py` | **GitHub issue auto-report** — automatically creates GitHub issues when critical errors occur (with dedup) |
 
-> Note: `wecom_login.py` (QR-code login) has been removed from this distribution. Use your own WeCom authentication method.
+### GitHub Issue Auto-Report
+
+When the reader encounters critical errors (e.g. failed to intercept `get/sheet` request, base64+zlib decode failure), it automatically creates a GitHub issue with:
+
+- Error type and stack trace
+- Document URL (sanitized)
+- Parameter set used
+- Dedup check (won't create duplicate issues for the same error within 24h)
+
+Configure via environment variable `GITHUB_TOKEN` (needs `repo:issues` scope). If not set, auto-report is silently skipped — the reader continues working without it.
+
+### Test Suite
+
+```bash
+cd scripts/
+python3 -m pytest test_wecom_doc_reader.py -v
+# or standalone:
+python3 test_wecom_doc_reader.py
+```
+
+19 tests covering: URL parsing (s3_/e3_/w3_/m4_), base64+zlib decoding, field type mapping, column definition parsing, row data extraction, error handling, edge cases.
 
 ## Reference Documentation
 
 | File | Contents |
 |------|----------|
 | `references/dop-api-data-structure.md` | dop-api response structure for smart tables — field types, option mapping, pagination |
+| `references/e3-native-js-api.md` | Spreadsheet native JS API (`SpreadsheetApp`) method reference |
 | `references/e3-spreadsheet-fallback.md` | Spreadsheet reading strategy evolution: v2.x (broken) → v3.0 (clipboard) → v3.1 (native JS API) |
+| `references/e3-merge-fill-verification.md` | Merged cell verification and row-offset correction methodology |
+| `references/e3-vs-s3-dop-api.md` | Comparison: e3 spreadsheet dop-api vs s3 smart sheet dop-api differences |
 | `references/m4-mind-extraction.md` | Mind map JSON node structure and recursive extraction algorithm |
 | `references/w3-opendoc-extraction.md` | Micro-doc opendoc API content extraction method |
+| `references/mcp-get-doc-content-multisheet-parsing.md` | MCP `get_doc_content` multi-sheet parsing pitfalls (column misalignment with `\|` characters) |
 | `references/wecom-messaging.md` | WeCom messaging integration for notification workflows |
 
 ## Prerequisites
@@ -93,14 +124,18 @@ WeCom documents come in **10+ types**, each requiring a different access method.
 - Python 3.8+
 - `playwright` (for browser-based reading paths)
 - `requests` and `beautifulsoup4`
-- Valid WeCom session cookies
+- Valid WeCom session cookies (obtain via `wecom_login.py` QR-code login)
 
 ## Setup
 
 1. Copy `wecom-doc-access-methods/` into your agent's skills directory
 2. Install dependencies: `pip install playwright requests beautifulsoup4`
 3. Run `playwright install chromium` if using browser paths
-4. Configure WeCom session cookies
+4. Run QR-code login to obtain session cookies:
+   ```bash
+   python3 scripts/wecom_login.py --state /path/to/state.json --qr /tmp/qr.png --timeout 300
+   ```
+5. Scan the QR code with your WeCom app to authenticate
 
 ## When to Use This Skill
 
@@ -117,7 +152,8 @@ WeCom documents come in **10+ types**, each requiring a different access method.
 
 | Version | Key Changes |
 |---------|-------------|
-| **v4.1.1** | Added mind map (`m4_`) support, complete document type coverage table |
+| **v4.2.0** | Smart sheet: base64+zlib decoding, complete dop-api parameter set (xsrf/rev/etc.), multi-sheet via workbook metadata (no tab switching). Added test suite (19 tests), GitHub issue auto-report, auth check script, cookie expiry monitor |
+| v4.1.1 | Added mind map (`m4_`) support, complete document type coverage table |
 | v4.0.2 | Fixed merge-cell row-offset bug (mergeList sheet-level vs data-level offset) |
 | v4.0.0 | Native JS API (`getCellDataAtPosition`) replaces clipboard HTML approach |
 | v3.1.0 | Spreadsheet rewrite: direct memory read, image URLs, date conversion |
@@ -126,7 +162,11 @@ WeCom documents come in **10+ types**, each requiring a different access method.
 
 ## Version
 
-v4.1.1 · Updated 2026-06-15
+v4.2.0 · Updated 2026-06-29
+
+## License
+
+MIT © Jian Liu 2026
 
 ---
 
@@ -149,7 +189,7 @@ v4.1.1 · Updated 2026-06-15
 
 | 类型 | URL 前缀 | 读取方式 | 数据质量 | 已验证 |
 |------|---------|---------|---------|--------|
-| **智能表格** | `s3_` | dop-api 全量结构化提取 | ✅ 完整字段、选项、用户引用 | ✅ |
+| **智能表格** | `s3_` | dop-api 全量结构化提取（base64+zlib 解码） | ✅ 完整字段、选项、用户引用 | ✅ |
 | **电子表格** | `e3_` | 原生 JS API 内存直读 | ✅ 精确合并单元格、图片 URL、日期 | ✅ |
 | **微文档** | `w3_` | opendoc API 正文提取 | ✅ 完整正文含格式 | ✅ |
 | **思维导图** | `m4_` | dop-api/get/mind JSON 树 | ✅ 完整节点层级 | ✅ |
@@ -165,12 +205,15 @@ v4.1.1 · Updated 2026-06-15
 
 | 数据 | 说明 |
 |------|------|
-| 所有子表 | 自动遍历多子表，无数量限制 |
+| 所有子表 | 通过 workbook 元数据自动遍历多子表，无需切换 tab |
 | 所有字段 | 字段名、类型（文本/数字/单选/日期/成员/图片/链接…） |
 | Select 选项 | 选项 ID → 显示值映射（单选和多选） |
 | 成员字段 | 用户 ID 解析为显示名 |
 | 行数据 | **无行数限制**（突破 MCP 的 2000 条上限） |
 | 图片 | 图片字段 URL 保留 |
+| 解码方式 | base64 urlsafe + zlib 解压 → JSON（非原始 JSON 字符串） |
+
+**技术深度**：智能表格单元格返回的是 base64 编码的 zlib 压缩 JSON（前缀 `eJ`）。读取器拦截页面首次 `get/sheet` 请求获取动态 `xsrf` 和 `rev` 参数，然后用完整参数集（`xsrf`、`needSheetState=2`、`rev`、`optimizedVer=2`、`chunkCellSize=15000`、`enableChunkRank=1`、`enablePermOpt=0`）逐子表获取。缺少任何参数返回 retcode 538002。
 
 ### 电子表格（`e3_`）— 内存级单元格访问
 
@@ -181,8 +224,6 @@ v4.1.1 · Updated 2026-06-15
 | 图片 | 通过 `getExtendedValue()` 获取原始 URL（如 `https://wdcdn.qpic.cn/...?w=4096`） |
 | 日期 | Excel 序列号 → ISO 日期自动转换 |
 | 多子表 | 逐 tab 读取，处理懒加载（点击 + 等待 5 秒） |
-
-**技术深度**：使用的是企微表格引擎的 **原生 JavaScript API**（`SpreadsheetApp`），不是剪贴板抓取或 API hack。之前 v2.x 假设 dop-api 返回 JSON — 实际上返回 protobuf 二进制，从未真正跑通。v3.1 的原生 JS API 直接从内存读取，是最可靠最完整的方法。
 
 ### 微文档（`w3_`）— 完整内容提取
 
@@ -204,20 +245,50 @@ v4.1.1 · Updated 2026-06-15
 
 | 脚本 | 用途 |
 |------|------|
-| `scripts/wecom_doc_reader.py` | **主读取器** — 自动检测文档类型（s3_/e3_/w3_/m4_）并使用对应方法 |
+| `scripts/wecom_doc_reader.py` | **主读取器**（v4.2.0）— 自动检测文档类型（s3_/e3_/w3_/m4_）并使用对应方法 |
 | `scripts/wecom_fetch.py` | dop-api 和 opendoc 底层 fetch 工具 |
+| `scripts/wecom_login.py` | 扫码登录脚本 — 生成 QR 码图片 + 保存浏览器 storage_state 用于 cookie 认证 |
+| `scripts/check_cookie_expiry.py` | 检查 storage_state 文件中的 cookie 过期时间，到期前告警 |
+| `scripts/validate_extraction.py` | 数据校验工具 — 检查空字段、类型不匹配、结构异常 |
+| `scripts/wecom_doc_auth_check.py` | MCP 授权状态检查 — 读取前检测 errcode 851014/851003 |
 | `scripts/wecom_reader.py` | 旧版读取器（已废弃，请用 `wecom_doc_reader.py`） |
+| `scripts/test_wecom_doc_reader.py` | **测试套件** — 19 个离线测试，覆盖 URL 解析、字段解码、数据提取、错误处理 |
+| `scripts/report_issue.py` | **GitHub issue 自动反馈** — 遇到关键错误时自动创建 GitHub issue（带去重） |
 
-> 注：`wecom_login.py`（扫码登录）已从本发行版移除。请使用你自己的企微认证方式。
+### GitHub Issue 自动反馈
+
+当读取器遇到关键错误（如未拦截到 `get/sheet` 请求、base64+zlib 解码失败）时，会自动创建 GitHub issue，包含：
+
+- 错误类型和堆栈信息
+- 文档 URL（已脱敏）
+- 使用的参数集
+- 去重检查（同一错误 24 小时内不重复创建）
+
+通过环境变量 `GITHUB_TOKEN` 配置（需要 `repo:issues` 权限）。未设置时自动跳过，不影响读取器正常工作。
+
+### 测试套件
+
+```bash
+cd scripts/
+python3 -m pytest test_wecom_doc_reader.py -v
+# 或独立运行：
+python3 test_wecom_doc_reader.py
+```
+
+19 个测试覆盖：URL 解析（s3_/e3_/w3_/m4_）、base64+zlib 解码、字段类型映射、列定义解析、行数据提取、错误处理、边界情况。
 
 ## 参考文档
 
 | 文件 | 内容 |
 |------|------|
 | `references/dop-api-data-structure.md` | 智能表格 dop-api 响应结构 — 字段类型、选项映射、分页 |
+| `references/e3-native-js-api.md` | 电子表格原生 JS API（`SpreadsheetApp`）方法参考 |
 | `references/e3-spreadsheet-fallback.md` | 电子表格读取策略演进：v2.x（不可用）→ v3.0（剪贴板）→ v3.1（原生 JS API） |
+| `references/e3-merge-fill-verification.md` | 合并单元格验证和行号偏移修正方法 |
+| `references/e3-vs-s3-dop-api.md` | 对比：e3 电子表格 dop-api vs s3 智能表格 dop-api 差异 |
 | `references/m4-mind-extraction.md` | 思维导图 JSON 节点结构和递归提取算法 |
 | `references/w3-opendoc-extraction.md` | 微文档 opendoc API 内容提取方法 |
+| `references/mcp-get-doc-content-multisheet-parsing.md` | MCP `get_doc_content` 多子表解析陷阱（含 `\|` 字符导致列错位） |
 | `references/wecom-messaging.md` | 企微消息集成（通知工作流） |
 
 ## 环境要求
@@ -225,14 +296,18 @@ v4.1.1 · Updated 2026-06-15
 - Python 3.8+
 - `playwright`（浏览器读取路径需要）
 - `requests`、`beautifulsoup4`
-- 有效的企微会话 Cookie
+- 有效的企微会话 Cookie（通过 `wecom_login.py` 扫码登录获取）
 
 ## 安装
 
 1. 将 `wecom-doc-access-methods/` 目录复制到你的 Agent skills 目录
 2. 安装依赖：`pip install playwright requests beautifulsoup4`
 3. 运行 `playwright install chromium`（如果使用浏览器路径）
-4. 配置企微会话 Cookie
+4. 运行扫码登录获取会话 Cookie：
+   ```bash
+   python3 scripts/wecom_login.py --state /path/to/state.json --qr /tmp/qr.png --timeout 300
+   ```
+5. 用企业微信扫描 QR 码完成认证
 
 ## 何时使用本 Skill
 
@@ -249,7 +324,8 @@ v4.1.1 · Updated 2026-06-15
 
 | 版本 | 关键变更 |
 |------|---------|
-| **v4.1.1** | 新增思维导图（`m4_`）支持，文档类型全覆盖 |
+| **v4.2.0** | 智能表格：base64+zlib 解码、完整 dop-api 参数集（xsrf/rev 等）、通过 workbook 元数据遍历多子表（无需切 tab）。新增测试套件（19 项）、GitHub issue 自动反馈、授权检查脚本、Cookie 过期监控 |
+| v4.1.1 | 新增思维导图（`m4_`）支持，文档类型全覆盖 |
 | v4.0.2 | 修复合并单元格行号偏移 bug |
 | v4.0.0 | 原生 JS API（`getCellDataAtPosition`）替代剪贴板 HTML |
 | v3.1.0 | 电子表格重构：内存直读、图片 URL、日期转换 |
@@ -258,4 +334,8 @@ v4.1.1 · Updated 2026-06-15
 
 ## 版本
 
-v4.1.1 · 更新于 2026-06-15
+v4.2.0 · 更新于 2026-06-29
+
+## 许可证
+
+MIT © Jian Liu 2026
