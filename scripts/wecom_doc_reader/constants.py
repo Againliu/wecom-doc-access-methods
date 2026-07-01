@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from datetime import timezone, timedelta
 
-__version__ = "4.2.0"
+__version__ = "4.5.0"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 常量
@@ -34,6 +34,19 @@ _FIELD_TYPE_CREATED_AT = 12  # 创建时间
 _FIELD_TYPE_UPDATED_AT = 13  # 最后编辑时间
 _FIELD_TYPE_SELECT = 17      # 单选
 _FIELD_TYPE_FORMULA = 19     # 公式/引用
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 自动重试配置（环境变量可覆盖）
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RETRY_MAX_ATTEMPTS = int(os.environ.get("WECOM_RETRY_MAX", "3"))   # 总尝试次数（含首次）
+RETRY_BASE_DELAY = float(os.environ.get("WECOM_RETRY_DELAY", "2"))  # 基础延迟秒数，指数退避（2s, 4s, 6s...）
+RETRY_SHEET_MAX = int(os.environ.get("WECOM_RETRY_SHEET_MAX", "2"))  # 单子表重试次数（不含首次）
+
+# 不可重试的错误关键词（认证/权限类，重试也没用）
+_NON_RETRYABLE_KEYWORDS = (
+    "cookies 已过期", "访问权限", "未登录", "无法解析 URL",
+    "无法解析 doc_id", "无法解析", "需重新登录",
+)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

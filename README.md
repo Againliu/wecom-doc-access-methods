@@ -73,13 +73,13 @@ WeCom documents come in **10+ types**, each requiring a different access method.
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/wecom_doc_reader.py` | **Main reader** (v4.2.0) — auto-detects document type (s3_/e3_/w3_/m4_) and uses the appropriate method |
+| `scripts/wecom_doc_reader/` | **Main reader** (v4.5.0) — auto-detects document type (s3_/e3_/w3_/m4_) and uses the appropriate method. Modular package with **two-layer auto-retry** (per-sheet + whole-operation). Modular package: `constants.py`, `utils.py`, `parsers.py`, `reader.py`, `cli.py` |
 | `scripts/wecom_fetch.py` | Low-level fetch utilities for dop-api and opendoc endpoints |
 | `scripts/wecom_login.py` | QR-code login script — generates QR image + saves browser storage_state for cookie-based auth |
 | `scripts/check_cookie_expiry.py` | Checks cookie expiry time in storage_state files, alerts before expiration |
 | `scripts/validate_extraction.py` | Data validation utility — checks for empty fields, type mismatches, structural issues |
 | `scripts/wecom_doc_auth_check.py` | MCP authorization status checker — detects errcode 851014/851003 before reading |
-| `scripts/wecom_reader.py` | Legacy reader (deprecated — use `wecom_doc_reader.py` instead) |
+| `scripts/wecom_fetch.py` | Low-level dop-api debug tool (7 functions, direct HTTP) |
 | `scripts/test_wecom_doc_reader.py` | **Test suite** — 19 offline tests covering URL parsing, field decoding, data extraction, error handling |
 | `scripts/report_issue.py` | **GitHub issue auto-report** — automatically creates GitHub issues when critical errors occur (with dedup) |
 
@@ -152,7 +152,9 @@ python3 test_wecom_doc_reader.py
 
 | Version | Key Changes |
 |---------|-------------|
-| **v4.2.0** | Smart sheet: base64+zlib decoding, complete dop-api parameter set (xsrf/rev/etc.), multi-sheet via workbook metadata (no tab switching). Added test suite (19 tests), GitHub issue auto-report, auth check script, cookie expiry monitor |
+| **v4.5.0** | **Auto-retry mechanism**: two-layer retry (per-sheet L1 + whole-operation L2), exponential backoff, non-retryable error detection (auth/permission), env var config (`WECOM_RETRY_MAX`/`WECOM_RETRY_DELAY`/`WECOM_RETRY_SHEET_MAX`), new return fields (`retry_succeeded_on_attempt`/`retries_exhausted`/`partial_success`) |
+| v4.4.0 | Modularization: single 2311-line file → 7-module package. All external import paths backward-compatible. CLI: `python3 -m wecom_doc_reader` |
+| v4.2.0 | Smart sheet: base64+zlib decoding, complete dop-api parameter set (xsrf/rev/etc.), multi-sheet via workbook metadata (no tab switching). Added test suite (19 tests), GitHub issue auto-report, auth check script, cookie expiry monitor |
 | v4.1.1 | Added mind map (`m4_`) support, complete document type coverage table |
 | v4.0.2 | Fixed merge-cell row-offset bug (mergeList sheet-level vs data-level offset) |
 | v4.0.0 | Native JS API (`getCellDataAtPosition`) replaces clipboard HTML approach |
@@ -162,7 +164,7 @@ python3 test_wecom_doc_reader.py
 
 ## Version
 
-v4.2.0 · Updated 2026-06-29
+v4.5.0 · Updated 2026-07-01
 
 ## License
 
@@ -245,13 +247,13 @@ MIT © Jian Liu 2026
 
 | 脚本 | 用途 |
 |------|------|
-| `scripts/wecom_doc_reader.py` | **主读取器**（v4.2.0）— 自动检测文档类型（s3_/e3_/w3_/m4_）并使用对应方法 |
+| `scripts/wecom_doc_reader/` | **主读取器**（v4.5.0）— 自动检测文档类型（s3_/e3_/w3_/m4_）并使用对应方法。**两层自动重试**（子表级 + 整体级）。模块化包：`constants.py`、`utils.py`、`parsers.py`、`reader.py`、`cli.py` |
 | `scripts/wecom_fetch.py` | dop-api 和 opendoc 底层 fetch 工具 |
 | `scripts/wecom_login.py` | 扫码登录脚本 — 生成 QR 码图片 + 保存浏览器 storage_state 用于 cookie 认证 |
 | `scripts/check_cookie_expiry.py` | 检查 storage_state 文件中的 cookie 过期时间，到期前告警 |
 | `scripts/validate_extraction.py` | 数据校验工具 — 检查空字段、类型不匹配、结构异常 |
 | `scripts/wecom_doc_auth_check.py` | MCP 授权状态检查 — 读取前检测 errcode 851014/851003 |
-| `scripts/wecom_reader.py` | 旧版读取器（已废弃，请用 `wecom_doc_reader.py`） |
+| `scripts/wecom_fetch.py` | 底层 dop-api 调试工具（7 个函数，直接 HTTP 请求） |
 | `scripts/test_wecom_doc_reader.py` | **测试套件** — 19 个离线测试，覆盖 URL 解析、字段解码、数据提取、错误处理 |
 | `scripts/report_issue.py` | **GitHub issue 自动反馈** — 遇到关键错误时自动创建 GitHub issue（带去重） |
 
@@ -324,7 +326,9 @@ python3 test_wecom_doc_reader.py
 
 | 版本 | 关键变更 |
 |------|---------|
-| **v4.2.0** | 智能表格：base64+zlib 解码、完整 dop-api 参数集（xsrf/rev 等）、通过 workbook 元数据遍历多子表（无需切 tab）。新增测试套件（19 项）、GitHub issue 自动反馈、授权检查脚本、Cookie 过期监控 |
+| **v4.5.0** | **自动重试机制**：两层重试（子表级 L1 + 整体级 L2）、指数退避、不可重试错误识别（认证/权限类）、环境变量配置（`WECOM_RETRY_MAX`/`WECOM_RETRY_DELAY`/`WECOM_RETRY_SHEET_MAX`）、新增返回字段（`retry_succeeded_on_attempt`/`retries_exhausted`/`partial_success`） |
+| v4.4.0 | 模块化拆分：单文件 2311 行 → 7 模块包。所有外部 import 路径完全兼容。CLI: `python3 -m wecom_doc_reader` |
+| v4.2.0 | 智能表格：base64+zlib 解码、完整 dop-api 参数集（xsrf/rev 等）、通过 workbook 元数据遍历多子表（无需切 tab）。新增测试套件（19 项）、GitHub issue 自动反馈、授权检查脚本、Cookie 过期监控 |
 | v4.1.1 | 新增思维导图（`m4_`）支持，文档类型全覆盖 |
 | v4.0.2 | 修复合并单元格行号偏移 bug |
 | v4.0.0 | 原生 JS API（`getCellDataAtPosition`）替代剪贴板 HTML |
@@ -334,7 +338,7 @@ python3 test_wecom_doc_reader.py
 
 ## 版本
 
-v4.2.0 · 更新于 2026-06-29
+v4.5.0 · 更新于 2026-07-01
 
 ## 许可证
 

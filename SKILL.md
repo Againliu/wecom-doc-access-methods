@@ -1,6 +1,6 @@
 ---
 name: wecom-doc-access-methods
-version: 4.4.0
+version: 4.5.0
 description: >
   企微文档读取 Skill。以下 4 种文档类型已通过完整实测验证：
   ① s3_ 智能表格 — dop-api 全量结构化读取，多子表自动遍历，select 选项映射，用户字段解析，2000 条以上全量获取；
@@ -700,6 +700,55 @@ workbook = json.loads(workbook_json)
 
 ---
 
+## 自动重试机制（v4.5.0+）
+
+企微文档读取过程中偶发失败（JSON 解析、网络超时、页面未完全加载、base64 解码截断等）时，**自动重试，无需调用方处理**。
+
+### 两层重试架构
+
+| 层级 | 范围 | 默认次数 | 退避 | 适用场景 |
+|------|------|----------|------|----------|
+| **L1: 子表级** | 单个子表 fetch+decode | 2 次重试（共 3 次尝试） | 2s 固定 | 多子表时某个子表偶发失败，不影响其他子表 |
+| **L2: 整体级** | 整个 `read()` 操作 | 2 次重试（共 3 次尝试） | 2s, 4s 指数 | 页面加载失败、xsrf 未拦截到等全局性问题 |
+
+**执行顺序**：L1 先跑完所有子表（每个子表独立重试），如果整体仍失败 → L2 重新启动浏览器再跑一轮。
+
+### 不可重试的错误（直接返回，不浪费重试）
+
+| 错误关键词 | 原因 |
+|------------|------|
+| `cookies 已过期` / `需重新登录` | 登录态失效，重试也不会变好 |
+| `访问权限` | 文档未授权，需文档所有者操作 |
+| `未登录` | 没有 storage_state |
+| `无法解析 URL` / `无法解析 doc_id` | URL 格式错误 |
+
+### 环境变量配置
+
+```bash
+WECOM_RETRY_MAX=3        # L2 整体重试总次数（含首次），默认 3
+WECOM_RETRY_DELAY=2      # L2 退避基础秒数（指数退避: 2s, 4s, 6s...），默认 2
+WECOM_RETRY_SHEET_MAX=2  # L1 单子表重试次数（不含首次），默认 2
+```
+
+### 返回值新增字段
+
+| 字段 | 含义 |
+|------|------|
+| `retry_succeeded_on_attempt` | 第 N 次重试成功（N > 1 时出现） |
+| `retries_exhausted` | `true` 表示所有重试都失败 |
+| `retry_count` | 总尝试次数 |
+| `partial_success` | `true` 表示多子表部分成功部分失败 |
+
+### 调用方指引（给其他 Agent / 脚本）
+
+1. **正常使用**：直接调 `read()`，重试自动处理，无需包裹 try-except 重试逻辑
+2. **检查 `retries_exhausted`**：如果为 `true`，说明偶发重试也救不回来，需排查根因（不是偶发问题）
+3. **检查 `partial_success`**：多子表场景下，部分成功的数据在 `sheets` 字段里可用，`failed_sheets` 里有失败子表信息
+4. **检查 `retry_succeeded_on_attempt`**：如果经常出现，说明偶发率偏高，可考虑增大 `WECOM_RETRY_MAX`
+5. **认证错误不重试**：如果 `error` 含 `cookies 已过期` / `访问权限`，重试也无效，直接走续期/授权流程
+
+---
+
 ## 故障处理速查
 
 | 错误码 | 含义 | 解决方案 |
@@ -863,6 +912,14 @@ crontab -e
 
 ## 更新日志
 
+- **2026-07-01** (v4.5.0): 🔄 **自动重试机制 — 两层重试架构**
+  - **新增** `read()` 顶层重试（L2）：偶发失败自动重试最多 3 次（指数退避 2s/4s），认证/权限类错误不重试
+  - **新增** `_read_smartsheet()` 子表级重试（L1）：每个子表独立重试最多 3 次（2s 固定退避），不影响其他子表
+  - **新增** `_is_retryable_error()` 函数：区分可重试错误（JSON 解析、网络超时、base64 解码截断）和不可重试错误（cookies 过期、无权限、未登录）
+  - **新增** 环境变量配置：`WECOM_RETRY_MAX` / `WECOM_RETRY_DELAY` / `WECOM_RETRY_SHEET_MAX`
+  - **新增** 返回值字段：`retry_succeeded_on_attempt` / `retries_exhausted` / `retry_count` / `partial_success`
+  - **新增** SKILL.md「自动重试机制」章节：两层架构说明、不可重试错误表、环境变量、调用方指引
+  - **动机**：其他 Agent 使用本 skill 时偶发 JSON 解析失败导致晨报采集中断，根因是网络抖动/响应截断等偶发性问题，重试即可恢复
 - **2026-06-30** (v4.4.0): 🔧 **模块化拆分 — 单文件 2311 行 → 7 模块 package**
   - **拆分** `scripts/wecom_doc_reader.py`（2311 行）→ `scripts/wecom_doc_reader/` package（7 个模块）
     - `__init__.py`（91 行）— 聚合 re-export，保持 `from wecom_doc_reader import WeComDocReader` 等所有外部 API 完全兼容

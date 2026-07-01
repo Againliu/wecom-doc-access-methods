@@ -30,6 +30,10 @@ from .constants import (
     _FIELD_TYPE_SELECT,
     _FIELD_TYPE_FORMULA,
     _DOM_SELECTORS,
+    RETRY_MAX_ATTEMPTS,
+    RETRY_BASE_DELAY,
+    RETRY_SHEET_MAX,
+    _NON_RETRYABLE_KEYWORDS,
 )
 from .utils import _auto_report
 from .parsers import (
@@ -39,6 +43,21 @@ from .parsers import (
     _block_fonts,
     _is_login_page,
 )
+
+
+def _is_retryable_error(error_msg: str) -> bool:
+    """判断错误是否可重试（非认证/权限类偶发错误）。
+
+    可重试：JSON 解析失败、网络超时、页面未完全加载、base64 解码失败、
+            xsrf 未拦截到、未找到行数据等偶发性问题。
+    不可重试：cookies 过期、无访问权限、未登录、URL 无法解析等确定性错误。
+    """
+    if not error_msg:
+        return True  # 无错误信息，当作可重试
+    for kw in _NON_RETRYABLE_KEYWORDS:
+        if kw in error_msg:
+            return False
+    return True
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 主类
@@ -269,9 +288,13 @@ class WeComDocReader:
           - m4_ 思维导图 → _read_mind (dop-api/get/mind JSON 节点树)
           - 其他类型     → _read_dom (DOM 文本提取)
 
+        自动重试：偶发失败（JSON 解析、网络超时、页面未完全加载）自动重试
+        最多 RETRY_MAX_ATTEMPTS 次（默认 3），指数退避。
+        认证/权限类错误不重试（cookies 过期、无权限等）。
+
         返回:
             成功: {"success": True, "doc_type": "...", ...}
-            失败: {"success": False, "error": "..."}
+            失败: {"success": False, "error": "...", "retries_exhausted": True}
         """
         if not self._has_state(user_id):
             return {
@@ -281,19 +304,50 @@ class WeComDocReader:
             }
 
         info = parse_doc_url(url)
+        last_result = None
 
-        if info["doc_type"] == "s3":
-            return await self._read_smartsheet(
-                user_id, url, sheet_id or info["tab"]
-            )
-        elif info["doc_type"] == "e3":
-            return await self._read_spreadsheet(
-                user_id, url, sheet_id or info["tab"]
-            )
-        elif info["doc_type"] == "m4":
-            return await self._read_mind(user_id, url, info)
-        else:
-            return await self._read_dom(user_id, url, info)
+        for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
+            if attempt > 1:
+                delay = RETRY_BASE_DELAY * (attempt - 1)
+                await asyncio.sleep(delay)
+
+            if info["doc_type"] == "s3":
+                last_result = await self._read_smartsheet(
+                    user_id, url, sheet_id or info["tab"]
+                )
+            elif info["doc_type"] == "e3":
+                last_result = await self._read_spreadsheet(
+                    user_id, url, sheet_id or info["tab"]
+                )
+            elif info["doc_type"] == "m4":
+                last_result = await self._read_mind(user_id, url, info)
+            else:
+                last_result = await self._read_dom(user_id, url, info)
+
+            # 成功则直接返回
+            if last_result.get("success"):
+                if attempt > 1:
+                    last_result["retry_succeeded_on_attempt"] = attempt
+                return last_result
+
+            # 认证/权限类错误不重试，直接返回
+            err = last_result.get("error", "")
+            if not _is_retryable_error(err):
+                return last_result
+
+            # 多子表部分失败：如果有成功的子表，也不重试整个操作
+            # （单表级重试已在 _read_smartsheet 内部处理）
+            if last_result.get("sheets") and any(
+                s.get("records") for s in last_result.get("sheets", [])
+            ):
+                last_result["partial_success"] = True
+                return last_result
+
+        # 所有重试都失败
+        if last_result and not last_result.get("success"):
+            last_result["retries_exhausted"] = True
+            last_result["retry_count"] = RETRY_MAX_ATTEMPTS
+        return last_result
 
     # ── 3a. DOM 文本提取（通用） ─────────────────────────
 
@@ -1601,7 +1655,7 @@ class WeComDocReader:
             else:
                 target_sheets = all_sheets
 
-            # 对每个子表主动 fetch 全量数据
+            # 对每个子表主动 fetch 全量数据（含单表级自动重试）
             all_results = []
             for sh in target_sheets:
                 sid = sh["id"]
@@ -1614,96 +1668,111 @@ class WeComDocReader:
                     f"&rev={rev}&optimizedVer=2"
                     f"&chunkCellSize=15000&enableChunkRank=1&enablePermOpt=0"
                 )
-                # JS 端返回原始 smartsheet 字符串（base64+zlib）
-                fetch_result = await page.evaluate(
-                    """async (url) => {
-                        try {
-                            const r = await fetch(url, { credentials: 'include' });
-                            const j = await r.json();
-                            const item = j?.data?.initialAttributedText?.text?.[0];
-                            if (!item) return { error: j.errmsg || 'no text item', retcode: j.retcode };
-                            return {
-                                ok: true,
-                                total_record_count: item.total_record_count,
-                                max_row: item.max_row,
-                                smartsheet: item.smartsheet,
-                                workbook: item.workbook || '[]',
-                            };
-                        } catch (e) {
-                            return { error: e.message };
+
+                sheet_result = None
+                for sheet_attempt in range(1, RETRY_SHEET_MAX + 2):
+                    if sheet_attempt > 1:
+                        await page.wait_for_timeout(2000)
+
+                    # JS 端返回原始 smartsheet 字符串（base64+zlib）
+                    fetch_result = await page.evaluate(
+                        """async (url) => {
+                            try {
+                                const r = await fetch(url, { credentials: 'include' });
+                                const j = await r.json();
+                                const item = j?.data?.initialAttributedText?.text?.[0];
+                                if (!item) return { error: j.errmsg || 'no text item', retcode: j.retcode };
+                                return {
+                                    ok: true,
+                                    total_record_count: item.total_record_count,
+                                    max_row: item.max_row,
+                                    smartsheet: item.smartsheet,
+                                    workbook: item.workbook || '[]',
+                                };
+                            } catch (e) {
+                                return { error: e.message };
+                            }
+                        }""",
+                        api_url,
+                    )
+                    if not fetch_result or fetch_result.get("error"):
+                        sheet_result = {
+                            "sheet_id": sid, "sheet_name": sname,
+                            "success": False, "error": fetch_result.get("error") if fetch_result else "no response",
                         }
-                    }""",
-                    api_url,
-                )
-                if not fetch_result or fetch_result.get("error"):
-                    all_results.append({
+                        continue  # 重试此子表
+
+                    # Python 端解码 base64+zlib
+                    ss_raw = fetch_result["smartsheet"]
+                    try:
+                        padding = 4 - len(ss_raw) % 4
+                        if padding != 4:
+                            ss_raw += "=" * padding
+                        decoded = base64.urlsafe_b64decode(ss_raw)
+                        decompressed = zlib.decompress(decoded)
+                        parsed = json.loads(decompressed.decode("utf-8"))
+                    except Exception as e:
+                        _auto_report(f"base64+zlib 解码失败 (sheet: {sname})",
+                                     str(e),
+                                     {"url": url, "sheet_id": sid, "sheet_name": sname, "step": "decode", "attempt": sheet_attempt})
+                        sheet_result = {
+                            "sheet_id": sid, "sheet_name": sname,
+                            "success": False, "error": f"base64+zlib 解码失败: {e}",
+                        }
+                        continue  # 重试此子表
+
+                    # parsed 可能是 [[items...]] 双层嵌套，取第一层
+                    if parsed and isinstance(parsed[0], list):
+                        parsed = parsed[0]
+
+                    # 提取列定义和选项映射
+                    field_defs, select_options, user_map = _parse_column_defs(parsed)
+
+                    # 提取行数据（t=3028 的 item）
+                    records_raw = {}
+                    for item in parsed:
+                        if item.get("t") == 3028:
+                            c = item.get("c", {})
+                            sub = c.get("2") or c.get("k2") or {}
+                            records_raw = sub.get("1") or sub.get("k1") or {}
+                            break
+
+                    if not records_raw:
+                        sheet_result = {
+                            "sheet_id": sid, "sheet_name": sname,
+                            "success": False, "error": "未找到行数据",
+                        }
+                        continue  # 重试此子表
+
+                    # 成功：转换为结构化记录
+                    records = []
+                    for rid, rdata in records_raw.items():
+                        cells = rdata.get("k1") or rdata.get("1") or {}
+                        record = {"_record_id": rid}
+                        for fid, fdef in field_defs.items():
+                            cell = cells.get(fid, {})
+                            so = select_options.get(fid) if fdef["type"] == _FIELD_TYPE_SELECT else None
+                            record[fdef["name"]] = _cell_value(cell, so, user_map)
+                        records.append(record)
+
+                    sheet_result = {
                         "sheet_id": sid, "sheet_name": sname,
-                        "success": False, "error": fetch_result.get("error") if fetch_result else "no response",
-                    })
-                    continue
+                        "success": True,
+                        "records": records,
+                        "field_defs": {fid: d["name"] for fid, d in field_defs.items()},
+                        "total": len(records),
+                        "total_record_count": fetch_result.get("total_record_count", len(records)),
+                    }
+                    if sheet_attempt > 1:
+                        sheet_result["retry_succeeded_on_attempt"] = sheet_attempt
+                    break  # 成功，跳出重试循环
 
-                # Python 端解码 base64+zlib
-                ss_raw = fetch_result["smartsheet"]
-                try:
-                    # 补齐 base64 padding
-                    padding = 4 - len(ss_raw) % 4
-                    if padding != 4:
-                        ss_raw += "=" * padding
-                    decoded = base64.urlsafe_b64decode(ss_raw)
-                    decompressed = zlib.decompress(decoded)
-                    parsed = json.loads(decompressed.decode("utf-8"))
-                except Exception as e:
-                    _auto_report(f"base64+zlib 解码失败 (sheet: {sname})",
-                                 str(e),
-                                 {"url": url, "sheet_id": sid, "sheet_name": sname, "step": "decode"})
-                    all_results.append({
-                        "sheet_id": sid, "sheet_name": sname,
-                        "success": False, "error": f"base64+zlib 解码失败: {e}",
-                    })
-                    continue
+                # 重试耗尽仍失败
+                if sheet_result and not sheet_result.get("success"):
+                    sheet_result["retries_exhausted"] = True
+                    sheet_result["retry_count"] = RETRY_SHEET_MAX + 1
 
-                # parsed 可能是 [[items...]] 双层嵌套，取第一层
-                if parsed and isinstance(parsed[0], list):
-                    parsed = parsed[0]
-
-                # 提取列定义和选项映射
-                field_defs, select_options, user_map = _parse_column_defs(parsed)
-
-                # 提取行数据（t=3028 的 item）
-                records_raw = {}
-                for item in parsed:
-                    if item.get("t") == 3028:
-                        c = item.get("c", {})
-                        sub = c.get("2") or c.get("k2") or {}
-                        records_raw = sub.get("1") or sub.get("k1") or {}
-                        break
-
-                if not records_raw:
-                    all_results.append({
-                        "sheet_id": sid, "sheet_name": sname,
-                        "success": False, "error": "未找到行数据",
-                    })
-                    continue
-
-                # 转换为结构化记录
-                records = []
-                for rid, rdata in records_raw.items():
-                    cells = rdata.get("k1") or rdata.get("1") or {}
-                    record = {"_record_id": rid}
-                    for fid, fdef in field_defs.items():
-                        cell = cells.get(fid, {})
-                        so = select_options.get(fid) if fdef["type"] == _FIELD_TYPE_SELECT else None
-                        record[fdef["name"]] = _cell_value(cell, so, user_map)
-                    records.append(record)
-
-                all_results.append({
-                    "sheet_id": sid, "sheet_name": sname,
-                    "success": True,
-                    "records": records,
-                    "field_defs": {fid: d["name"] for fid, d in field_defs.items()},
-                    "total": len(records),
-                    "total_record_count": fetch_result.get("total_record_count", len(records)),
-                })
+                all_results.append(sheet_result)
 
             await browser.close()
 

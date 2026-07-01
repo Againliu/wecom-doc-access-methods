@@ -52,6 +52,10 @@ from .constants import (
     _FIELD_TYPE_SELECT,
     _FIELD_TYPE_FORMULA,
     _DOM_SELECTORS,
+    RETRY_MAX_ATTEMPTS,
+    RETRY_BASE_DELAY,
+    RETRY_SHEET_MAX,
+    _NON_RETRYABLE_KEYWORDS,
 )
 from .utils import _auto_report
 from .parsers import (
@@ -80,6 +84,10 @@ __all__ = [
     "_FIELD_TYPE_SELECT",
     "_FIELD_TYPE_FORMULA",
     "_DOM_SELECTORS",
+    "RETRY_MAX_ATTEMPTS",
+    "RETRY_BASE_DELAY",
+    "RETRY_SHEET_MAX",
+    "_NON_RETRYABLE_KEYWORDS",
     "DEFAULT_STATE_DIR",
     "LEGACY_SHARED_STATE",
     "_TZ_CN",
