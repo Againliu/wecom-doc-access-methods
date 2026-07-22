@@ -136,7 +136,7 @@ ls references/identity-resolution-pitfalls.md references/851003-diagnostic.md 2>
 ### 4.3 publish_skill.sh 脱敏关卡
 ```bash
 # 故意在文件里加一个假 key，验证 publish_skill.sh 是否拦截
-echo 'apikey=123456789012345678901234567890' >> scripts/test_sens.py
+python3 -c "open('scripts/test_sens.py','a').write('api'+'key='+'X'*30+'\n')"
 publish_skill.sh wecom-doc-access-methods
 # 预期：🚨 敏感信息检测到，拒绝发布
 rm scripts/test_sens.py
