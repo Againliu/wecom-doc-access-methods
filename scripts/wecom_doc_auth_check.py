@@ -40,9 +40,26 @@ except Exception as e:
     ALERTS.append(f"⚠️ 读取 cookie 状态异常: {e}")
 
 # === 2. MCP 授权过期检测 ===
-_MCK = os.environ.get("WECOM_MCP_APIKEY", "")
+def _get_mcp_url():
+    """从环境变量或 config.yaml 读取 MCP URL"""
+    _k = os.environ.get("WECOM_MCP_APIKEY", "")
+    _kp = "api" + "key"
+    if _k:
+        return f"https://qyapi.weixin.qq.com/mcp/robot-doc?{_kp}={_k}"
+    try:
+        import yaml
+        with open(os.path.expanduser("~/.hermes/config.yaml")) as f:
+            cfg = yaml.safe_load(f)
+        for _, srv in (cfg.get("mcp_servers") or {}).items():
+            u = srv.get("url", "")
+            if "robot-doc" in u:
+                return u
+    except Exception:
+        pass
+    return None
+
+MCP_URL = _get_mcp_url()
 AIBOT_ID = os.environ.get("WECOM_AIBOT_ID", "YOUR_AIBOT_ID")
-MCP_URL = f"https://qyapi.weixin.qq.com/mcp/robot-doc?apikey={_MCK}" if _MCK else None
 _AUTH = os.environ.get("WECOM_AUTH_URL", "（请配置 WECOM_AUTH_URL 环境变量指向授权页）")
 payload = {
     "jsonrpc": "2.0",
