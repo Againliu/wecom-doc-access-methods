@@ -1,6 +1,6 @@
 ---
 name: wecom-doc-access-methods
-version: 5.1.0
+version: 5.2.0
 description: >
   读取：s3_ 智能表格(dop-api全量)、e3_ 电子表格(原生JS API)、w3_ 微文档(opendoc API完整正文)、m4_ 思维导图(dop-api/get/mind)。
   编辑：w3_ 微文档(MCP edit_doc_content全量覆写 + 浏览器键盘增删改)、e3_ 电子表格(MCP sheet_*格式化/公式/超链接)、s3_ 智能表格(MCP smartsheet_* 17种字段类型)。
@@ -152,7 +152,8 @@ for sheet_name, sheet_data in sheets.items():
 - `wecom_doc_check_auth.sh` / `lark_check_auth.sh` 已标记 DEPRECATED，功能合并到 auth_flow 脚本
 - 全局 cookie 文件（`_shared.json` / `wecom_browser_state.json` / `wecom_cookies.json`）改为软链接指向团队负责人 per-user 文件
 - `wecom_auth_flow.py` QR 图片保存到 `~/.config/wecom-doc/workspace/`（企微 MEDIA 白名单目录，可直接发）
-- **定时同步脚本必须设 `LARKSUITE_CLI_CONFIG_DIR`**：所有用 `lark-cli --as user` 的 crontab 脚本，开头根据 `WECOM_USERID` 构造 `LARKSUITE_CLI_CONFIG_DIR` 指向 per-user 目录。crontab 显式设 `WECOM_USERID=创建人`。详见 `lark-multi-user-auth` skill 的「定时同步脚本必须设置 LARKSUITE_CLI_CONFIG_DIR」章节。
+- **定时同步脚本必须设 `LARKSUITE_CLI_CONFIG_DIR`**
+- **⚠️ 非 Hermes 环境注意**：上述 `wecom_auth_flow.py` / `lark_auth_flow.py` 是 Hermes 专用封装脚本（依赖 gateway 会话上下文）。其他 AI 工具（Codex / Trea / GPT Cowork）直接用 MCP apikey 环境变量（`WECOM_MCP_APIKEY`）或 WeCom OAuth Device Flow 自行实现身份验证即可，不需要这些脚本。：所有用 `lark-cli --as user` 的 crontab 脚本，开头根据 `WECOM_USERID` 构造 `LARKSUITE_CLI_CONFIG_DIR` 指向 per-user 目录。crontab 显式设 `WECOM_USERID=创建人`。详见 `lark-multi-user-auth` skill 的「定时同步脚本必须设置 LARKSUITE_CLI_CONFIG_DIR」章节。
 
 ## 方案速查
 
@@ -180,6 +181,7 @@ for sheet_name, sheet_data in sheets.items():
 | `references/testing-and-issue-feedback.md` | 测试方案(单元/集成)+ GitHub Issue 自动反馈机制 | 改脚本后验证、配置反馈 |
 | `references/cookie-watchdog.md` | Cookie 与授权状态定时检查(部署方式/配置/续期) | 部署定时检查任务时 |
 | `references/changelog.md` | 完整更新日志 | 追溯版本历史时 |
+| `references/testing-plan.md` | **🆕 E2E 测试方案 v5.2.0**（T1-T18 用例 + 7 个已知坑验证，供 AI coding agent 从 GitHub clone 后逐步执行并回填结果） | 验证 skill 安装与读写能力时 |
 
 ### 最高频 Pitfalls 速记(细节见 references/pitfalls.md)
 
@@ -193,6 +195,8 @@ for sheet_name, sheet_data in sheets.items():
 - 🚨 **SmartPage 嵌入图片必须用英文括号 `()`**,中文括号 `（）`不渲染;完整四步法见 references/wecom-doc-image-embedding.md 第四节
 - 🚨 **未实测的代码不准写进方案**(血泪教训)
 - 🚨 **公开前必须扫描 .py 脚本里的硬编码凭据**（`apikey=`/`secret=`/`token=`），不只是 .md 文档——2026-07-22 实测 `wecom_doc_auth_check.py:36` 的 MCP apikey 漏过 07-17 脱敏审查、在公开 GitHub 仓库暴露。修复：改读 `WECOM_MCP_APIKEY` 环境变量 + 轮换 key + 清 git 历史。详见 skill-building-standard §17.6 + `references/crud-coverage-gap.md` P0
+- 🚨 **MCP list 类接口成功 ≠ apikey 有效**：`tools/list`/`list_prompts` 可能返回连接初始化时的缓存，apikey 已失效也显示"成功"。配 key 后**必须立刻用真实 tools/call 验证**（如对假 URL 调 `get_doc_content`）：errcode 850001 = key 错；851003/851014 = 鉴权通过、文档权限问题。2026-07-22 被缓存假象误导过一次
+- 🚨 **凭据录入后立即逐字符核对**：用户粘贴的长 key 手工转录极易丢字符（2026-07-22 86 位 key 录成 85 位报 850001）。验证失败时先从 state.db `messages.content`（role=user）恢复原文 difflib 比对，不要凭记忆重敲、也不要先怀疑用户的 key 错了
 
 ---
 
@@ -200,6 +204,7 @@ for sheet_name, sheet_data in sheets.items():
 
 | 错误码 | 含义 | 解决方案 |
 |--------|------|----------|
+| 850001 | MCP apikey 无效 | key 本身错误——核对录入是否丢/多字符（与原始消息逐字符 diff，见下）、或后台又轮换过；从机器人后台重新复制完整 StreamableHTTP URL |
 | 851014 | MCP 授权过期 | 重新分享文档给机器人，或切浏览器方案 |
 | 2200063 | MCP 授权过期（另一种） | 同上 |
 | 851000 | 文档格式不支持（e3_） | 用浏览器方案 |
@@ -235,6 +240,7 @@ for sheet_name, sheet_data in sheets.items():
 - `scripts/validate_extraction.py` — **🆕 提取结果 ground-truth 验证**（导出子表前 N 行为 CSV，对照原始文档逐列检查）
 - `scripts/wecom_doc_auth_check.py` — **🆕 授权状态定时检测**（cookie 提前 4 天预警 + MCP 851014 告警 + 授权历史追踪，Hermes cron 每 6 小时跑，有异常才输出）
 - `scripts/upload_image.py` — **🆕 图片/文件上传工具（直调 MCP JSON-RPC）**（绕过 Hermes 客户端 8KB 限制，无大小限制，99.3% 质量保持，120s 超时。用法：`python3 upload_image.py <image_path> <docid>` 或 `--file` 上传文件）
+- `scripts/wecom_doc_writer.py` — **🆕 统一写入口 v5.2.0**（s3_ 记录 CRUD / e3_ 范围写+追加 / w3_ 创建+编辑 / SmartPage 创建+带图四步法 / 图片文件上传。纯 requests 直调 MCP JSON-RPC，无 MCP 框架依赖，任意 AI 工具可用。简单数据结构自动包装：2D 数组→CellData、标量→字段值格式；SmartPage 图片用 `![alt](local:/path)` 占位符自动上传替换 CDN URL。`--help` 查全部子命令）
 
 ---
 

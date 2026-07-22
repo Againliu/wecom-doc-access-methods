@@ -254,8 +254,9 @@ class WeComDocReader:
                 state = json.load(f)
             cookies = {c["name"]: c["value"] for c in state.get("cookies", [])}
 
+            _check_url = os.environ.get("WECOM_COOKIE_CHECK_URL", "https://doc.weixin.qq.com/home/recent")
             resp = httpx.get(
-                "https://doc.weixin.qq.com/home/recent",
+                _check_url,
                 cookies=cookies,
                 follow_redirects=False,
                 timeout=10,

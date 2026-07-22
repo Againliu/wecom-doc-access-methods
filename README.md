@@ -1,188 +1,328 @@
-# 📄 WeCom Document Access — Full CRUD for Enterprise WeChat Documents
+# 📄 WeCom Document Access — Read & Write Any Enterprise WeChat Document
 
-[中文](#中文说明)
+> One self-contained toolkit for any AI agent to read and write Enterprise WeChat (企业微信/WeCom) documents — smart tables, spreadsheets, micro-docs, mind maps, and SmartPages. No MCP framework required.
 
-Read **and write** any document type from Enterprise WeChat (企业微信 / WeCom) programmatically — smart tables, spreadsheets, micro-documents, mind maps, SmartPages, and more. One self-contained skill that any AI agent (with or without an MCP client framework) can integrate in minutes.
+**中文版见文末 [中文说明](#中文说明)。**
 
-## What It Provides
+---
 
-1. **Full CRUD coverage** — read *and* write paths for every major document type, all verified in production
-2. **No MCP framework required** — every MCP operation is also wrapped as plain JSON-RPC over HTTPS (`requests` + `json` only)
-3. **No row limits** — bypass MCP's 2,000-row cap for smart tables via the browser/dop-api path
-4. **No authorization single-point-of-failure** — browser cookie path keeps working when MCP tokens expire
-5. **Secure by default** — no hardcoded credentials; everything via environment variables or your own config file
+## Why You Need This
 
-## Quick Start (0 → 1)
+WeCom (企业微信) has 10+ document types. The official MCP integration only covers 2 types and caps at 2,000 rows. If you're building an AI agent that needs to read or write WeCom documents, you'd normally have to:
+
+- Reverse-engineer each document type's internal API separately
+- Handle MCP token expiration (error 851014)
+- Hit the 2,000-row limit on smart tables
+- Deal with canvas-based renderers that break text extraction
+
+This skill solves all of that in one package. Every method is tested in production — not theoretical.
+
+## What Can It Do?
+
+| Doc Type | URL Prefix | Read | Write | Method |
+|----------|-----------|:----:|:----:|--------|
+| **Smart Table** (智能表格) | `s3_` | ✅ | ✅ CRUD | MCP (write) + browser dop-api (read, no row limit) |
+| **Spreadsheet** (电子表格) | `e3_` | ✅ | ✅ range/append | MCP (write) + browser JS API (read, memory-level) |
+| **Micro-Doc** (微文档) | `w3_` | ✅ | ✅ create/edit* | MCP + browser opendoc API. *Edit only on bot-created docs |
+| **SmartPage** (智能文档) | `/smartdoc/` | ✅ | ✅ create + images | MCP export (read) + MCP create (write). No edit API — recreate |
+| **Mind Map** (思维导图) | `m4_` | ✅ | — | Browser dop-api/get/mind (read only) |
+| Form / Slide / Flowchart | `/form/` etc. | ⚠️ | — | DOM text extraction (read only) |
+
+**Write coverage detail:**
+
+| Operation | s3_ | e3_ | w3_ | SmartPage | m4_ |
+|-----------|:---:|:---:|:---:|:---------:|:---:|
+| Create | ✅ | ✅ (sub-sheet) | ✅ | ✅ (with images) | — |
+| Add records/rows | ✅ | ✅ (append) | — | — | — |
+| Update | ✅ | ✅ (range) | ✅* | — | — |
+| Delete | ✅ | ✅ (sub-sheet) | — | — | — |
+| Image embed | — | — | — | ✅ (four-step) | — |
+
+> **Roadmap**: browser-based write paths for e3_/w3_/SmartPage/m4_ (for when MCP can't do the operation — e.g., editing member-created micro-docs, deleting SmartPages, writing to mind maps). These require live API research and are being implemented incrementally.
+
+## Installation
+
+### Prerequisites
+
+- **Python 3.8+**
+- **A WeCom account** with access to the documents you want to read/write
+- For browser-based reads: **Playwright** + Chromium
+
+### Step 1: Clone
 
 ```bash
-# 1. Clone
 git clone https://github.com/Againliu/wecom-doc-access-methods.git
 cd wecom-doc-access-methods
-
-# 2. Install
-pip install -r requirements.txt
-playwright install chromium   # only needed for browser/cookie read paths
-
-# 3. Configure credentials (choose one)
-export WECOM_MCP_APIKEY="<your bot's MCP apikey>"     # for MCP read/write paths
-#   — get it from your WeCom bot admin console (AI helper → MCP config)
-python3 scripts/wecom_login.py --state /tmp/state.json --qr /tmp/qr.png
-#   — scan the QR with WeCom app, for browser/cookie read paths
-
-# 4. First read (smart table, no row limit, browser path)
-PYTHONPATH=./scripts python3 -m wecom_doc_reader read <wecom_userid> <s3_doc_url> --state /tmp/state.json
-
-# 5. First write (add a record to a smart table, MCP path)
-python3 scripts/wecom_doc_writer.py s3 add --url <s3_doc_url> --sheet-id <sheet_id> \
-  --records '[{"标题": "hello from CLI"}]'
 ```
 
-## CRUD Coverage Matrix
-
-| Type | URL Prefix | Read | Create | Update | Delete | Notes |
-|------|-----------|:----:|:------:|:------:|:------:|-------|
-| Smart Table (智能表格) | `s3_` | ✅ MCP / ✅ browser | ✅ | ✅ | ✅ | MCP write; browser read has no row cap |
-| Spreadsheet (电子表格) | `e3_` | ✅ browser JS API | ✅ | ✅ | ⚠️ rows only | range write + append via MCP |
-| Micro-Doc (微文档) | `w3_` | ✅ MCP / ✅ browser | ✅ | ✅* | — | *edit only works on bot-created docs (851003 otherwise) |
-| SmartPage (智能文档) | `/smartdoc/` or `dop_` | ✅ MCP export | ✅ | ❌ rebuild only | ❌ | no edit API — recreate with full content |
-| Mind Map (思维导图) | `m4_` | ✅ browser dop-api | — | — | — | read-only |
-| Form / Slide / Flowchart (收集表/幻灯片/流程图) | `/form/` `/slide/` `/flowchart/` | ⚠️ DOM text | — | — | — | read-only, basic text |
-| Image / File upload | — | — | ✅ | — | — | `upload_doc_image` / `upload_doc_file` via MCP |
-
-## Write Support — `scripts/wecom_doc_writer.py` (NEW in v5.2.0)
-
-Unified write entry for all MCP-writable types. Pure `requests` + `json` — **no MCP client framework needed**, works from any agent/runtime.
+### Step 2: Install Python dependencies
 
 ```bash
-# s3_ smart table
-wecom_doc_writer.py s3 sheets --url <url>                     # list sheets
-wecom_doc_writer.py s3 fields --url <url> --sheet-id <id>     # list fields
-wecom_doc_writer.py s3 get    --url <url> --sheet-id <id> --limit 10
-wecom_doc_writer.py s3 add    --url <url> --sheet-id <id> --records '[{"标题":"x","进度":50}]'
-wecom_doc_writer.py s3 update --url <url> --sheet-id <id> --records '[{"record_id":"r_x","进度":80}]'
-wecom_doc_writer.py s3 delete --url <url> --sheet-id <id> --record-ids r_a,r_b
-
-# e3_ spreadsheet — plain 2D arrays, auto-wrapped to CellData
-wecom_doc_writer.py e3 info --url <url>
-wecom_doc_writer.py e3 update-range --url <url> --sheet-id <id> \
-  --start-row 0 --start-col 0 --data '[["姓名","分数"],["张三",95]]'
-wecom_doc_writer.py e3 append --url <url> --sheet-id <id> --row '["李四",88]'
-
-# w3_ micro-doc
-wecom_doc_writer.py w3 create --name "标题" --content @doc.md
-wecom_doc_writer.py w3 edit   --url <url> --content @doc.md
-wecom_doc_writer.py w3 get    --url <url>          # async-polls until done, returns Markdown
-
-# SmartPage
-wecom_doc_writer.py smartpage create --title "标题" --pages '[{"page_title":"页1","content":"# 内容"}]'
-wecom_doc_writer.py smartpage create-with-images --title "标题" --markdown @page.md \
-  [--container-url <image-container-url>]
-wecom_doc_writer.py smartpage export --url <url>
-
-# uploads
-wecom_doc_writer.py upload-image --file img.png --doc-url <container/doc url>
-wecom_doc_writer.py upload-file  --file a.zip
+pip install -r requirements.txt
 ```
 
-Simple data structures are auto-wrapped: scalars → field-value format, 2D arrays → `CellData` grids. Pass `@file.json` / `@file.md` for larger payloads.
+### Step 3: Install browser (for read paths)
 
-## SmartPage Image Embedding — Four-Step Method (verified)
+```bash
+playwright install chromium
+```
 
-SmartPages support Markdown image syntax `![](cdn_url)`, but images must first be uploaded through `upload_doc_image` against a container document:
+> Only needed if you'll use browser-based reading (recommended — it bypasses MCP row limits and token expiration).
 
-1. **Create a container SmartPage** (once, reuse forever) → get its `url`
-2. **Upload image** to the container: `upload_doc_image(base64_content=..., url=<container url>)` → returns `https://wdcdn.qpic.cn/...` CDN URL
-3. **Reference in Markdown**: `![](<cdn_url>)` — ⚠️ **English parentheses `()` only**; Chinese parentheses `（）` silently fail to render
-4. **Create the final SmartPage** with the complete content in one call
+### Step 4: Configure credentials
 
-`create-with-images` automates all four steps — write `![alt](local:/abs/path.png)` placeholders in your Markdown, it uploads each and substitutes the CDN URLs. CDN URLs are document-independent, so one persistent container serves all your SmartPages.
+You need **one or both** of these credential sources:
 
-Known SmartPage limits: no `edit_doc_content` support (recreate instead), no delete API, 4K images auto-scale.
+**Option A — MCP API Key** (for MCP read/write paths):
 
-## Read Support — `scripts/wecom_doc_reader/`
+1. Go to your WeCom admin console → AI Helper → MCP configuration
+2. Copy the **API Key** from the StreamableHTTP URL
+3. Set it as an environment variable:
 
-Auto-detects document type (s3_/e3_/w3_/m4_) and picks the right method, with **two-layer auto-retry** (per-sheet + whole-operation). Modular package: `constants.py`, `utils.py`, `parsers.py`, `reader.py`, `cli.py`.
+```bash
+export WECOM_MCP_APIKEY=your_api_key_here
+```
 
-| Type | Method | Data Quality |
-|------|--------|-------------|
-| `s3_` | dop-api full structured extraction (base64+zlib decoded) | ✅ complete fields, options, user refs, **unlimited rows** |
-| `e3_` | Native JS API `getCellDataAtPosition()` memory read | ✅ exact merged cells, image URLs, dates — 800 cells < 1ms |
-| `w3_` | opendoc API full content extraction | ✅ complete body with formatting |
-| `m4_` | dop-api/get/mind recursive JSON tree | ✅ complete node hierarchy |
-| form/slide/flowchart | DOM text extraction | ⚠️ basic text |
+**Option B — Browser Cookie** (for browser read paths):
 
-**Technical depth**: smart-sheet cells are base64+zlib JSON (prefix `eJ`); the reader intercepts the page's initial `get/sheet` request for dynamic `xsrf`/`rev` params, then fetches each sub-sheet with the full parameter set — missing any returns retcode 538002. Spreadsheet merged cells need `getMergeReference()` + mergeList row-offset correction. See `references/` for full write-ups.
+```bash
+python3 scripts/wecom_login.py --state /tmp/state.json --qr /tmp/qr.png --timeout 300
+```
 
-## Configuration
+Scan the QR code with your WeCom app. This saves a browser session that lasts ~24 hours.
 
-| Source | Priority | Purpose |
-|--------|----------|---------|
-| `WECOM_MCP_URL` | 1 | Full MCP endpoint URL (with apikey) |
-| `WECOM_MCP_APIKEY` | 2 | Just the key; URL is composed automatically |
-| agent config file | 3 | fallback — an `mcp_servers` entry containing `robot-doc` in `~/.hermes/config.yaml` or `~/.openclaw/config.yaml` if present |
-| `WECOM_USERID` | — | default WeCom userid for browser read paths |
-| `WECOM_RETRY_MAX` / `WECOM_RETRY_DELAY` / `WECOM_RETRY_SHEET_MAX` | — | reader retry tuning |
-| `GITHUB_TOKEN` | — | optional, enables GitHub issue auto-report (`repo:issues` scope) |
+> **Tip**: Set up both. MCP is faster for writes; browser has no row limits for reads. Cookie expiry is monitored by `check_cookie_expiry.py`.
 
-No credentials are stored in the repo. Browser/cookie paths use the `storage_state` file you generate via `wecom_login.py` — keep it out of version control (`.gitignore` already covers `scripts/wecom_states/`).
+## Usage — Reading
 
-## All Scripts
+### Smart Table (`s3_`) — via browser (no row limit)
+
+```bash
+PYTHONPATH=./scripts python3 -m wecom_doc_reader read \
+  --user <your_wecom_userid> \
+  --url "https://doc.weixin.qq.com/smartsheet/s3_xxx?scode=xxx" \
+  --state /tmp/state.json
+```
+
+Returns: all sheets, all fields, all records, select options, user references — **no 2,000-row cap**.
+
+### Smart Table (`s3_`) — via MCP (faster, for ≤2000 rows)
+
+```bash
+python3 scripts/wecom_doc_writer.py s3 sheets --url <url>
+python3 scripts/wecom_doc_writer.py s3 fields --url <url> --sheet-id <id>
+python3 scripts/wecom_doc_writer.py s3 get --url <url> --sheet-id <id> --limit 100
+```
+
+### Spreadsheet (`e3_`) — via browser JS API
+
+```bash
+PYTHONPATH=./scripts python3 -m wecom_doc_reader read \
+  --user <your_wecom_userid> \
+  --url "https://doc.weixin.qq.com/sheet/e3_xxx" \
+  --state /tmp/state.json
+```
+
+Returns: exact cell values, merged cell ranges, image URLs, dates — 800 cells in <1ms.
+
+### Micro-Doc (`w3_`) — via MCP (async)
+
+```bash
+python3 scripts/wecom_doc_writer.py w3 get --url <w3_url>
+# Auto-polls until done, returns Markdown content
+```
+
+### SmartPage — via MCP export (async)
+
+```bash
+python3 scripts/wecom_doc_writer.py smartpage export --url <smartpage_url>
+# Auto-polls, returns Markdown with embedded image CDN URLs
+```
+
+### Mind Map (`m4_`) — via browser
+
+```bash
+PYTHONPATH=./scripts python3 -m wecom_doc_reader read \
+  --user <your_wecom_userid> \
+  --url "https://doc.weixin.qq.com/mind/m4_xxx" \
+  --state /tmp/state.json
+```
+
+Returns: complete node hierarchy (central topic → branches → sub-branches).
+
+## Usage — Writing
+
+All write operations go through `scripts/wecom_doc_writer.py` — a unified CLI that calls WeCom's MCP API directly via JSON-RPC over HTTPS. **No MCP client framework needed** — just `requests` + `json`.
+
+### Smart Table (`s3_`) — Full CRUD
+
+```bash
+# Add records (simple dict → auto-wrapped to field format)
+python3 scripts/wecom_doc_writer.py s3 add \
+  --url <url> --sheet-id <id> \
+  --records '[{"标题": "hello", "进度": 50}]'
+
+# Update records (needs record_id — get it from s3 get first)
+python3 scripts/wecom_doc_writer.py s3 update \
+  --url <url> --sheet-id <id> \
+  --records '[{"record_id": "r_xxx", "进度": 80}]'
+
+# Delete records
+python3 scripts/wecom_doc_writer.py s3 delete \
+  --url <url> --sheet-id <id> --record-ids r_aaa,r_bbb
+```
+
+### Spreadsheet (`e3_`) — Range write + append
+
+```bash
+# Write a 2D array to a range (auto-wrapped to CellData)
+python3 scripts/wecom_doc_writer.py e3 update-range \
+  --url <url> --sheet-id <id> \
+  --start-row 0 --start-col 0 \
+  --data '[["姓名","分数"],["张三",95]]'
+
+# Append a single row
+python3 scripts/wecom_doc_writer.py e3 append \
+  --url <url> --sheet-id <id> \
+  --row '["李四",88]'
+```
+
+### Micro-Doc (`w3_`) — Create + edit
+
+```bash
+# Create a new doc with content
+python3 scripts/wecom_doc_writer.py w3 create \
+  --name "会议纪要" --content @meeting.md
+
+# Edit a bot-created doc (⚠️ only works on docs created by the bot — see Troubleshooting)
+python3 scripts/wecom_doc_writer.py w3 edit \
+  --url <w3_url> --content @updated.md
+```
+
+### SmartPage — Create with images (four-step method)
+
+SmartPages support Markdown image syntax, but images must be uploaded through a container document first. The `create-with-images` command automates all four steps:
+
+```bash
+# Write your Markdown with local: image placeholders:
+# # My Page
+# Here's a screenshot:
+# ![screenshot](local:/tmp/screenshot.png)
+
+python3 scripts/wecom_doc_writer.py smartpage create-with-images \
+  --title "项目周报" \
+  --markdown @weekly-report.md \
+  --container-url <existing_container_url>  # optional — auto-creates if omitted
+```
+
+**What it does:**
+1. Creates a container SmartPage (or reuses `--container-url`) for image uploads
+2. Uploads each `local:` image to the container → gets CDN URLs
+3. Replaces placeholders with `![](cdn_url)` — ⚠️ **English parentheses `()` only!**
+4. Creates the final SmartPage with complete content in one call
+
+> **Why a container?** CDN URLs are document-independent. One persistent container serves all your SmartPages. Keep it, don't delete it.
+
+### Upload files/images
+
+```bash
+# Upload an image to a document (returns CDN URL)
+python3 scripts/wecom_doc_writer.py upload-image \
+  --file screenshot.png --doc-url <doc_url>
+
+# Upload any file (returns file_id for smart table ATTACHMENT fields)
+python3 scripts/wecom_doc_writer.py upload-file \
+  --file report.pdf --file-name "Q3-report.pdf"
+```
+
+## Configuration Reference
+
+| Variable | Required? | Purpose |
+|----------|-----------|---------|
+| `WECOM_MCP_APIKEY` | For MCP paths | WeCom bot's MCP API key (from admin console) |
+| `WECOM_MCP_URL` | Alternative | Full MCP endpoint URL (overrides above) |
+| `WECOM_USERID` | For browser reads | Your WeCom user ID (for cookie isolation) |
+| `WECOM_COOKIE_CHECK_URL` | Optional | Override the cookie-validity check URL (default: `https://doc.weixin.qq.com/home/recent`) |
+| `WECOM_RETRY_MAX` | Optional | Max retry attempts (default: 3) |
+| `WECOM_RETRY_DELAY` | Optional | Initial retry delay in seconds (default: 2, exponential) |
+| `WECOM_RETRY_SHEET_MAX` | Optional | Max per-sheet retries (default: 2) |
+| `GITHUB_TOKEN` | Optional | Enables automatic GitHub issue creation on errors (scope: `repo:issues`) |
+
+**No credentials are stored in the repository.** Cookie files go in `scripts/wecom_states/` (gitignored). MCP keys come from environment variables or your agent's config file.
+
+## Troubleshooting
+
+| Error | Meaning | Fix |
+|-------|---------|-----|
+| `errcode 850001` | Invalid MCP API key | Re-copy the key from WeCom admin console → AI Helper → MCP config. Verify no characters were dropped. |
+| `errcode 851003` | Bot not authorized for this document | Share the document to the bot in WeCom, or use `w3 create` to create a new doc the bot owns. |
+| `errcode 851014` | MCP token expired | Re-obtain the MCP API key from admin console. For reads, use the browser path (no MCP needed). |
+| `errcode 301085` | `upload_doc_image` missing `url` parameter | Always pass `--doc-url` (the container/document URL). The image upload target must be specified. |
+| SmartPage images not rendering | Used Chinese parentheses `（）` | Use **English parentheses `()`** in Markdown: `![](url)` not `![]（url）`. |
+| Cookie expired | Browser session timed out (~24h) | Re-run `wecom_login.py` to get a fresh session. |
+| `fixture 'reader' not found` | pytest trying to collect browser integration tests | These are integration tests — run via `python3 scripts/test_wecom_doc_reader.py --offline` for unit tests only. |
+
+## Testing
+
+### Unit tests (offline, no browser needed)
+
+```bash
+cd scripts/
+python3 -m pytest test_wecom_doc_reader.py -v
+# or: python3 test_wecom_doc_reader.py --offline
+```
+
+19 tests covering: URL parsing (s3_/e3_/w3_/m4_), base64+zlib decoding, field type mapping, column definition parsing, row data extraction, error handling.
+
+### End-to-end test plan (for AI agents)
+
+See **`references/testing-plan.md`** — 18 test cases + 7 known-pitfall checks, designed for AI coding agents (GPT Cowork, Codex, Trea) to execute against a live WeCom environment.
+
+## Included Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `scripts/wecom_doc_reader/` | Main reader — auto type detection, two-layer retry |
-| `scripts/wecom_doc_writer.py` | **Unified writer (v5.2.0)** — s3_/e3_/w3_/SmartPage/uploads via MCP JSON-RPC |
+| `scripts/wecom_doc_reader/` | Main reader — auto type detection, two-layer retry, 7 modules |
+| `scripts/wecom_doc_writer.py` | **Unified writer** — s3_/e3_/w3_/SmartPage/uploads via MCP JSON-RPC |
 | `scripts/upload_image.py` | Standalone image upload helper |
 | `scripts/wecom_login.py` | QR-code login → browser `storage_state` |
 | `scripts/check_cookie_expiry.py` | Cookie expiry watchdog |
-| `scripts/wecom_doc_auth_check.py` | MCP authorization status checker (851014/851003 pre-flight) |
-| `scripts/wecom_fetch.py` | Low-level dop-api / opendoc fetch utilities |
+| `scripts/wecom_doc_auth_check.py` | MCP auth pre-flight checker (detects 851014/851003) |
+| `scripts/wecom_fetch.py` | Low-level dop-api/opendoc fetch utilities |
 | `scripts/validate_extraction.py` | Extracted-data validation |
 | `scripts/test_wecom_doc_reader.py` | Offline test suite |
 | `scripts/report_issue.py` | GitHub issue auto-report with 24h dedup |
 
-## Testing
-
-```bash
-python3 -m pytest scripts/test_wecom_doc_reader.py -v   # offline unit tests
-```
-
-End-to-end test plan (18 cases + 7 known-pitfall checks, designed for AI coding agents to execute): **`references/testing-plan.md`**.
-
 ## Reference Documentation
 
-| File | Contents |
-|------|----------|
-| `references/mcp-api-guide.md` | MCP JSON-RPC direct-call guide — endpoint, payload shape, error codes |
-| `references/testing-plan.md` | Full E2E test plan for AI agents |
+| File | What's inside |
+|------|--------------|
+| `references/mcp-api-guide.md` | MCP JSON-RPC direct-call guide: endpoint, payload, error codes |
+| `references/testing-plan.md` | Full E2E test plan for AI agents (18 cases + 7 pitfalls) |
 | `references/pitfalls.md` | All known pitfalls across every doc type |
-| `references/playwright-dop-api-guide.md` | Browser dop-api interception deep-dive |
-| `references/dop-api-data-structure.md` | Smart-table dop-api response structure |
-| `references/e3-native-js-api.md` | Spreadsheet native JS API reference |
-| `references/e3-spreadsheet-fallback.md` | e3 strategy evolution: v2.x → v3.0 → v3.1 |
-| `references/e3-merge-fill-verification.md` | Merged-cell row-offset correction |
-| `references/e3-vs-s3-dop-api.md` | e3 vs s3 dop-api differences |
-| `references/m4-mind-extraction.md` | Mind-map JSON structure + recursion |
-| `references/w3-opendoc-extraction.md` | Micro-doc opendoc extraction |
 | `references/wecom-doc-image-embedding.md` | SmartPage image embedding four-step details |
-| `references/mcp-get-doc-content-multisheet-parsing.md` | MCP multi-sheet parsing pitfalls (`\|` column misalignment) |
+| `references/e3-native-js-api.md` | Spreadsheet `SpreadsheetApp` JS API reference |
+| `references/dop-api-data-structure.md` | Smart table dop-api response structure |
+| `references/m4-mind-extraction.md` | Mind map JSON structure + recursion |
+| `references/w3-opendoc-extraction.md` | Micro-doc opendoc extraction |
+| `references/crud-coverage-gap.md` | CRUD coverage analysis (drives the roadmap) |
+| `references/playwright-dop-api-guide.md` | Browser dop-api interception deep-dive |
 | `references/retry-mechanism.md` | Reader retry architecture |
 | `references/cookie-watchdog.md` | Cookie expiry monitoring |
-| `references/crud-coverage-gap.md` | CRUD coverage analysis (drives the roadmap) |
 
 ## Version History
 
 | Version | Key Changes |
 |---------|-------------|
-| **v5.2.0** | **Write support**: new `wecom_doc_writer.py` unified write entry (s3_ records CRUD, e3_ range write/append, w3_ create/edit, SmartPage create + image four-step, file/image upload). SmartPage image-embedding method documented & automated. Security hardening: all credentials → env vars, repo fully desensitized, publish-time secret scanning. New `references/testing-plan.md` E2E suite |
-| v5.0.0 | Browser-path reads for s3_/e3_/w3_/m4_ production-hardened; retry mechanism; auth pre-flight checker |
-| v4.5.0 | Two-layer auto-retry, exponential backoff, non-retryable error detection |
+| **v5.2.0** | **Write support**: new `wecom_doc_writer.py` unified write entry (s3_ CRUD, e3_ range/append, w3_ create/edit, SmartPage create + image four-step, uploads). SmartPage image-embedding automated. Security: all credentials → env vars, repo fully desensitized, publish-time secret scanning. E2E test plan. |
+| v5.0.0 | Browser-path reads production-hardened; retry mechanism; auth pre-flight |
+| v4.5.0 | Two-layer auto-retry, exponential backoff |
 | v4.4.0 | Modularization: single 2311-line file → 7-module package |
-| v4.2.0 | Smart sheet base64+zlib decoding, full dop-api param set, test suite, issue auto-report |
+| v4.2.0 | Smart sheet base64+zlib decoding, full dop-api param set, test suite |
 | v4.1.1 | Mind map (`m4_`) support |
-| v4.0.0 | Native JS API replaces clipboard approach for spreadsheets |
+| v4.0.0 | Native JS API replaces clipboard for spreadsheets |
 | v3.x | Spreadsheet via clipboard HTML (deprecated) |
-| v2.x | dop-api JSON parsing (**deprecated** — actually protobuf, never worked) |
+| v2.x | dop-api JSON parsing (deprecated — returned protobuf) |
 
 ## Version
 
@@ -196,97 +336,82 @@ MIT © Jian Liu 2026
 
 ## 中文说明
 
-# 📄 企微文档读写 — 企业微信全类型文档 CRUD 方案
+# 📄 企微文档读写工具
 
-编程读写企业微信中的**任意文档类型**——智能表格、电子表格、微文档、思维导图、SmartPage 等。一个自包含 Skill，任何 AI Agent（有无 MCP client 框架）都能几分钟内接入。
+一个自包含工具包，让任何 AI Agent 读写企业微信中的**任意文档类型**——智能表格、电子表格、微文档、思维导图、SmartPage。无需 MCP 框架。
 
-## 核心能力
+### 解决什么问题？
 
-1. **全类型 CRUD 覆盖**——每种主要文档类型都有经过验证的读写路径
-2. **不依赖 MCP 框架**——所有 MCP 操作都封装为纯 JSON-RPC HTTPS 调用（只需 `requests` + `json`）
-3. **无行数限制**——浏览器/dop-api 路径突破 MCP 2000 条智能表格上限
-4. **授权无单点故障**——MCP Token 过期时浏览器 cookie 路径仍可用
-5. **默认安全**——仓库零硬编码凭据，全部走环境变量或本地配置
+企微文档有 10+ 种类型，官方 MCP 只覆盖 2 种且有 2000 行限制。本工具：
 
-## 快速上手（0→1）
+1. **全类型覆盖**——每种文档类型都有经过验证的读写路径
+2. **无行数限制**——浏览器路径突破 MCP 2000 条上限
+3. **不依赖 MCP 授权**——Token 过期时浏览器路径仍可用
+4. **无需 MCP 框架**——所有 MCP 操作封装为纯 JSON-RPC（`requests` + `json`）
+5. **安全默认**——仓库零硬编码凭据，全部环境变量
+
+### 安装
 
 ```bash
-# 1. 克隆
 git clone https://github.com/Againliu/wecom-doc-access-methods.git
 cd wecom-doc-access-methods
-
-# 2. 装依赖
 pip install -r requirements.txt
-playwright install chromium   # 仅浏览器/cookie 读取路径需要
-
-# 3. 配凭据（二选一或都配）
-export WECOM_MCP_APIKEY="<你的机器人 MCP apikey>"   # MCP 读写路径
-python3 scripts/wecom_login.py --state /tmp/state.json --qr /tmp/qr.png   # 扫码，cookie 读取路径
-
-# 4. 第一次读（智能表格，无行数限制）
-PYTHONPATH=./scripts python3 -m wecom_doc_reader read <企微userid> <s3_文档链接> --state /tmp/state.json
-
-# 5. 第一次写（智能表格加记录）
-python3 scripts/wecom_doc_writer.py s3 add --url <s3_文档链接> --sheet-id <子表id> \
-  --records '[{"标题": "hello from CLI"}]'
+playwright install chromium
 ```
 
-## CRUD 覆盖矩阵
-
-| 类型 | URL 前缀 | 读 | 增 | 改 | 删 | 说明 |
-|------|---------|:--:|:--:|:--:|:--:|------|
-| 智能表格 | `s3_` | ✅ MCP / ✅ 浏览器 | ✅ | ✅ | ✅ | MCP 写；浏览器读无行数上限 |
-| 电子表格 | `e3_` | ✅ 浏览器 JS API | ✅ | ✅ | ⚠️ 仅行 | MCP 范围写入 + 追加 |
-| 微文档 | `w3_` | ✅ MCP / ✅ 浏览器 | ✅ | ✅* | — | *只能改机器人创建的文档（否则 851003） |
-| SmartPage 智能文档 | `/smartdoc/` | ✅ MCP 导出 | ✅ | ❌ 只能重建 | ❌ | 无编辑 API，写错只能重做 |
-| 思维导图 | `m4_` | ✅ 浏览器 dop-api | — | — | — | 只读 |
-| 收集表/幻灯片/流程图 | `/form/` 等 | ⚠️ DOM 文本 | — | — | — | 只读，基础文本 |
-| 图片/文件上传 | — | — | ✅ | — | — | `upload_doc_image` / `upload_doc_file` |
-
-## 写能力 — `scripts/wecom_doc_writer.py`（v5.2.0 新增）
-
-统一写入口，纯 `requests` + `json`，**无需 MCP client 框架**，任意 Agent/运行时可用。简单数据结构自动包装：标量 → 字段值格式，2D 数组 → `CellData` 网格。用法见上文英文区命令表（参数完全一致）。
-
-## SmartPage 图片嵌入四步法（已验证）
-
-1. **建容器 SmartPage**（一次性，长期复用）→ 拿访问链接
-2. **上传图片到容器**：`upload_doc_image(base64_content=..., url=<容器链接>)` → 返回 `wdcdn.qpic.cn` CDN URL
-3. **Markdown 引用**：`![](<cdn_url>)`——⚠️ **必须英文括号 `()`**，中文括号 `（）` 不渲染
-4. **一次性创建正式 SmartPage**
-
-`create-with-images` 命令自动完成全部四步——Markdown 里写 `![alt](local:/绝对路径.png)` 占位符即可。CDN URL 与文档无关，一个持久容器服务所有 SmartPage。
-
-已知限制：SmartPage 不支持 `edit_doc_content`（写错只能重建）、无删除 API、4K 图自动缩放。
-
-## 读能力 — `scripts/wecom_doc_reader/`
-
-自动识别文档类型（s3_/e3_/w3_/m4_）选择对应方法，**两层自动重试**（子表级 + 整体级）。各类型提取细节见英文区与 `references/`。
-
-## 配置
-
-| 来源 | 优先级 | 用途 |
-|------|--------|------|
-| `WECOM_MCP_URL` | 1 | 完整 MCP 端点 URL（含 apikey） |
-| `WECOM_MCP_APIKEY` | 2 | 仅 key，自动拼 URL |
-| agent 配置文件 | 3 | 兜底——`~/.hermes/config.yaml` 或 `~/.openclaw/config.yaml` 中含 `robot-doc` 的 `mcp_servers` 条目 |
-| `WECOM_USERID` | — | 浏览器读取路径的默认企微 userid |
-| `WECOM_RETRY_MAX` / `WECOM_RETRY_DELAY` / `WECOM_RETRY_SHEET_MAX` | — | 读取器重试调优 |
-| `GITHUB_TOKEN` | — | 可选，启用 GitHub issue 自动反馈 |
-
-仓库不存任何凭据。cookie 路径用 `wecom_login.py` 生成的 `storage_state` 文件，请勿提交版本库（`.gitignore` 已覆盖 `scripts/wecom_states/`）。
-
-## 测试
+### 配置凭据（二选一或都配）
 
 ```bash
-python3 -m pytest scripts/test_wecom_doc_reader.py -v   # 离线单元测试
+# MCP 方式（读写都可用）
+export WECOM_MCP_APIKEY=<从企微后台 AI Helper → MCP 配置获取>
+
+# 浏览器方式（读取，无行数限制）
+python3 scripts/wecom_login.py --state /tmp/state.json --qr /tmp/qr.png
+# 扫码登录，Cookie 约 24 小时有效
 ```
 
-端到端测试方案（18 个用例 + 7 个已知坑验证，专为 AI coding agent 执行设计）：**`references/testing-plan.md`**。
+### 快速使用
 
-## 版本
+```bash
+# 读智能表格（浏览器，无行数限制）
+PYTHONPATH=./scripts python3 -m wecom_doc_reader read --user <企微ID> --url <s3_链接> --state /tmp/state.json
 
-v5.2.0 · 更新于 2026-07-22
+# 写智能表格（MCP）
+python3 scripts/wecom_doc_writer.py s3 add --url <链接> --sheet-id <子表ID> --records '[{"标题":"测试"}]'
 
-## 许可证
+# 创建带图的 SmartPage
+python3 scripts/wecom_doc_writer.py smartpage create-with-images --title "周报" --markdown @report.md
+```
 
-MIT © Jian Liu 2026
+### 能力矩阵
+
+| 类型 | 读 | 写 | 说明 |
+|------|:--:|:--:|------|
+| 智能表格 s3_ | ✅ | ✅ CRUD | MCP 写 + 浏览器读（无行数限制） |
+| 电子表格 e3_ | ✅ | ✅ 范围/追加 | MCP 写 + 浏览器 JS API 读 |
+| 微文档 w3_ | ✅ | ✅ 创建/编辑* | *编辑仅限机器人创建的文档 |
+| SmartPage | ✅ | ✅ 创建+图片 | 无编辑 API，改内容只能重建 |
+| 思维导图 m4_ | ✅ | — | 只读 |
+
+> **路线图**：浏览器写路径（e3_ 行删除、w3_ 成员文档编辑、SmartPage 删除、m4_ 写入）需要原始 API 调研，正在逐步实现。
+
+### 常见问题
+
+| 错误 | 原因 | 解决 |
+|------|------|------|
+| 850001 | MCP key 无效 | 从企微后台重新复制（注意别漏字符） |
+| 851003 | 机器人无权访问此文档 | 在企微里把文档分享给机器人，或用 `w3 create` 新建 |
+| 851014 | MCP Token 过期 | 重新获取 key，或用浏览器路径读取 |
+| 图片不渲染 | 用了中文括号 | 必须英文括号 `()` |
+| Cookie 过期 | 会话超时（约24h） | 重新运行 `wecom_login.py` |
+
+### 测试
+
+```bash
+python3 -m pytest scripts/test_wecom_doc_reader.py -v  # 离线单元测试
+# 端到端测试方案见 references/testing-plan.md
+```
+
+### 版本
+
+v5.2.0 · 2026-07-22 · MIT License

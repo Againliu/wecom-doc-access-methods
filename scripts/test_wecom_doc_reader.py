@@ -216,7 +216,7 @@ def test_column_defs_parsing():
 
 # ─── 4. 单子表读取测试（需要浏览器） ───
 
-async def test_single_sheet_read(reader, user_id, test_url):
+async def _run_single_sheet_test(reader, user_id, test_url):
     r = TestResult("单子表读取")
     print("\n📋 单子表读取测试")
 
@@ -255,7 +255,7 @@ async def test_single_sheet_read(reader, user_id, test_url):
 
 # ─── 5. 多子表读取测试（需要浏览器） ───
 
-async def test_multi_sheet_read(reader, user_id, test_url):
+async def _run_multi_sheet_test(reader, user_id, test_url):
     r = TestResult("多子表读取")
     print("\n📋 多子表读取测试")
 
@@ -314,7 +314,7 @@ async def test_multi_sheet_read(reader, user_id, test_url):
 
 # ─── 6. 错误处理测试 ───
 
-async def test_error_handling(reader, user_id):
+async def _run_error_handling_test(reader, user_id):
     r = TestResult("错误处理")
     print("\n📋 错误处理测试")
 
@@ -343,7 +343,7 @@ async def test_error_handling(reader, user_id):
 
 # ─── 7. 性能测试 ───
 
-async def test_performance(reader, user_id, test_url):
+async def _run_performance_test(reader, user_id, test_url):
     r = TestResult("性能")
     print("\n📋 性能测试")
 
@@ -378,16 +378,16 @@ async def run_online_tests(args):
     results = []
 
     # 在线测试
-    r4 = await test_single_sheet_read(reader, user_id, test_url)
+    r4 = await _run_single_sheet_test(reader, user_id, test_url)
     results.append(r4)
 
-    r5 = await test_multi_sheet_read(reader, user_id, test_url)
+    r5 = await _run_multi_sheet_test(reader, user_id, test_url)
     results.append(r5)
 
-    r6 = await test_error_handling(reader, user_id)
+    r6 = await _run_error_handling_test(reader, user_id)
     results.append(r6)
 
-    r7 = await test_performance(reader, user_id, test_url)
+    r7 = await _run_performance_test(reader, user_id, test_url)
     results.append(r7)
 
     return results
