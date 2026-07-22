@@ -12,7 +12,7 @@ description: >
 
 # 企微文档稳定读取 — 通用 Skill
 
-> 参考文件：[851003-diagnostic](references/851003-diagnostic.md)（851003 权限错误诊断）、[identity-resolution-pitfalls](references/identity-resolution-pitfalls.md)（身份识别故障排查）、[e3-reader-output-pitfalls](references/e3-reader-output-pitfalls.md)（e3 读取：PYTHONPATH / JSON 前缀 / 表头 / 空行 / tab 定位）
+> 参考文件：[851003-diagnostic](references/851003-diagnostic.md)（851003 权限错误诊断）、[identity-resolution-pitfalls](references/identity-resolution-pitfalls.md)（身份识别故障排查）、[e3-reader-output-pitfalls](references/e3-reader-output-pitfalls.md)（e3 读取：PYTHONPATH / JSON 前缀 / 表头 / 空行 / tab 定位）、[e3-browser-write-research](references/e3-browser-write-research.md)（e3 浏览器写入 API 调研：setCellDataAtPosition 发现 + 值格式/保存机制待解）
 
 ## Skill 定位与架构（2026-07-16 团队负责人要求）
 
@@ -181,7 +181,8 @@ for sheet_name, sheet_data in sheets.items():
 | `references/testing-and-issue-feedback.md` | 测试方案(单元/集成)+ GitHub Issue 自动反馈机制 | 改脚本后验证、配置反馈 |
 | `references/cookie-watchdog.md` | Cookie 与授权状态定时检查(部署方式/配置/续期) | 部署定时检查任务时 |
 | `references/changelog.md` | 完整更新日志 | 追溯版本历史时 |
-| `references/testing-plan.md` | **🆕 E2E 测试方案 v5.2.0**（T1-T18 用例 + 7 个已知坑验证，供 AI coding agent 从 GitHub clone 后逐步执行并回填结果） | 验证 skill 安装与读写能力时 |
+| `references/testing-plan.md` | **🆕 E2E 测试方案 v5.2.0**（T1-T18 用例 + 7 个已知坑验证，面向所有主流 AI coding agent。含标准化结果 JSON + GitHub Issues 提交机制） | 验证 skill 安装与读写能力时 |
+| `references/e3-browser-write-research.md` | **🆕 e3 浏览器写入 API 调研**（setCellDataAtPosition 发现、值格式/保存机制待解、insertDimension/deleteDimension） | 实现 e3 浏览器写入时 |
 
 ### 最高频 Pitfalls 速记(细节见 references/pitfalls.md)
 
@@ -197,6 +198,10 @@ for sheet_name, sheet_data in sheets.items():
 - 🚨 **公开前必须扫描 .py 脚本里的硬编码凭据**（`apikey=`/`secret=`/`token=`），不只是 .md 文档——2026-07-22 实测 `wecom_doc_auth_check.py:36` 的 MCP apikey 漏过 07-17 脱敏审查、在公开 GitHub 仓库暴露。修复：改读 `WECOM_MCP_APIKEY` 环境变量 + 轮换 key + 清 git 历史。详见 skill-building-standard §17.6 + `references/crud-coverage-gap.md` P0
 - 🚨 **MCP list 类接口成功 ≠ apikey 有效**：`tools/list`/`list_prompts` 可能返回连接初始化时的缓存，apikey 已失效也显示"成功"。配 key 后**必须立刻用真实 tools/call 验证**（如对假 URL 调 `get_doc_content`）：errcode 850001 = key 错；851003/851014 = 鉴权通过、文档权限问题。2026-07-22 被缓存假象误导过一次
 - 🚨 **凭据录入后立即逐字符核对**：用户粘贴的长 key 手工转录极易丢字符（2026-07-22 86 位 key 录成 85 位报 850001）。验证失败时先从 state.db `messages.content`（role=user）恢复原文 difflib 比对，不要凭记忆重敲、也不要先怀疑用户的 key 错了
+- 🚨 **GitHub push 必须从技能目录推，不能从 GitLab clone 推**：`publish_skill.sh` 的 GitHub push 是从 `$LOCAL_SKILL`（技能目录自己的 git repo，origin=GitHub）推的。从包含所有 skill 的本地 GitLab clone 推到 GitHub 会覆盖为 172+ 文件 + 内部信息泄露。实测踩坑——force push 从错误 repo 把其他 skill 的文件 + 内部团队信息字样推到了公开 GitHub
+- 🚨 **GIT_HTTP_VERSION=HTTP/1.1 解决 GitHub "Empty reply from server"**：push 到 GitHub 间歇性报 `fatal: Empty reply from server`（网络抖动）。设 `GIT_HTTP_VERSION=HTTP/1.1` 环境变量可解决。`publish_skill.sh` 和手动 push 都适用
+- 🚨 **脱敏扫描必须包含团队人名和公司名**：publish_skill.sh 的 pattern 不能只有 IP/userid/apikey——还必须包含：团队成员人名、内部域名、内部产品名。否则团队特征信息泄露到公开 GitHub。实测 changelog.md/pitfalls.md 含人名、testing-plan.md 含内部域名，均已清理
+- 🚨 **README 面向用户安装使用，不面向开发者内部**：用户要求 README 完整、通俗、准确——覆盖安装步骤、凭据配置、每类型读写示例（copy-paste）、故障排查表。不写内部实现细节、不提团队名
 
 ---
 
