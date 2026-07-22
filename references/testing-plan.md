@@ -1,7 +1,24 @@
-# wecom-doc-access-methods Skill 测试方案（2026-07-22）
+# wecom-doc-access-methods Skill 测试方案（2026-07-22 · 长期维护）
 
-> 供 GPT Cowork / Codex 等 AI coding agent 执行的自动化测试方案。
+> 供所有主流 AI coding agent 执行的自动化测试方案。
 > 从 GitHub clone 后逐步执行，每步记录实际结果与预期对比。
+> 测试完成后通过 GitHub Issues 或飞书提交结果（见文末「结果提交」）。
+
+## 目标 AI 工具
+
+本方案面向以下 AI coding 工具，任何能执行 shell 命令和 Python 脚本的工具均可参与：
+
+| 工具 | 特点 |
+|------|------|
+| GPT Cowork | GPT 驱动，擅长 Web 交互 |
+| OpenAI Codex CLI | 代码生成 + 终端执行 |
+| Claude Code | Anthropic 驱动，擅长代码分析 |
+| Cursor | IDE 集成，内嵌 agent |
+| GitHub Copilot CLI | GitHub 生态，`gh` 原生支持 |
+| Trea | 国产 AI IDE |
+| Windsurf | Codeium 驱动 |
+| Augment | 代码补全 + agent |
+| Cline / 其他 | 任何能跑 shell + Python 的 AI agent |
 
 ## 前置条件
 
@@ -22,7 +39,7 @@ playwright install chromium
 python3 -m pytest scripts/test_wecom_doc_reader.py -v
 ```
 
-**预期**：3 passed + 4 errors（fixture 缺失，已知问题）。import 成功。
+**预期**：3 passed, 0 errors（v5.2.0 已修复 fixture 问题）。import 成功。
 
 ## 二、读能力测试（各文档类型）
 
@@ -164,3 +181,75 @@ PYTHONPATH=./scripts python3 -m wecom_doc_reader --help
 | 敏感文件排除 | 不存在 | | |
 | publish 关卡 | 拦截 | | |
 | 干净环境 | import OK | | |
+
+
+## 七、结果提交
+
+测试完成后，请将结果通过以下方式之一提交：
+
+### 方式 A：GitHub Issues（推荐）
+
+```bash
+# 生成标准化结果 JSON
+cat > /tmp/test-result.json << 'EOF'
+{
+  "tool": "Claude Code",
+  "version": "1.0.0",
+  "date": "2026-07-22",
+  "environment": {"python": "3.11", "os": "macOS 14.5"},
+  "results": {
+    "T1_import": {"status": "pass", "note": ""},
+    "T2_cli": {"status": "pass", "note": ""},
+    "T3_syntax": {"status": "pass", "note": ""},
+    "T4_s3_mcp_read": {"status": "pass", "note": "5 records"},
+    "T5_s3_browser_read": {"status": "skip", "note": "no browser cookie"},
+    "T6_w3_mcp_read": {"status": "pass", "note": ""},
+    "T7_smartpage_export": {"status": "pass", "note": ""},
+    "T8_e3_browser_read": {"status": "skip", "note": "no browser cookie"},
+    "T9_s3_add": {"status": "pass", "note": ""},
+    "T10_w3_edit": {"status": "pass", "note": ""},
+    "T11_smartpage_images": {"status": "pass", "note": "4-step method verified"},
+    "T12_upload_image": {"status": "pass", "note": ""},
+    "T13_desensitize": {"status": "pass", "note": "0 hits"},
+    "T14_sensitive_exclude": {"status": "pass", "note": ""},
+    "T15_no_hardcode_key": {"status": "pass", "note": ""},
+    "T16_auth_check": {"status": "pass", "note": ""},
+    "T17_clean_install": {"status": "pass", "note": ""},
+    "T18_mcp_direct": {"status": "pass", "note": ""}
+  },
+  "summary": {"total": 18, "pass": 14, "skip": 2, "fail": 0},
+  "pitfalls": {"P1_smartpage_edit": "confirmed", "P2_chinese_parens": "confirmed"},
+  "notes": "浏览器路径需要企微 cookie，CI 环境跳过"
+}
+EOF
+
+# 提交 GitHub Issue
+gh issue create --repo Againliu/wecom-doc-access-methods \
+  --title "Test Results: <tool-name> <date>" \
+  --body "$(cat /tmp/test-result.json)"
+```
+
+### 方式 B：飞书文档结果汇总表
+
+测试结果会汇总到飞书文档：https://xag-1024.feishu.cn/docx/VxQ1dXkoaoWHMHxC5JwczdsBnUe
+
+AI 工具可将自己的结果行追加到下方表格（如有飞书 API 权限），或由李雷（AI 助手）从 GitHub Issues 收集后统一更新。
+
+### 结果汇总
+
+| 工具 | 日期 | 通过/总数 | 跳过 | 失败 | 备注 |
+|------|------|----------|------|------|------|
+| _（等待提交）_ | | | | | |
+
+### 标准结果 JSON 字段说明
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `tool` | string | AI 工具名称（如 "Claude Code"） |
+| `version` | string | 工具版本 |
+| `date` | string | 测试日期 YYYY-MM-DD |
+| `environment` | object | Python 版本、OS 等 |
+| `results` | object | 每个测试项的 status + note |
+| `summary` | object | total/pass/skip/fail 统计 |
+| `pitfalls` | object | 已知坑点验证结果 |
+| `notes` | string | 补充说明 |
