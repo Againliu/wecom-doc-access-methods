@@ -1,0 +1,11 @@
+# 缓存
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# 备份文件
+SKILL.md.bak-*
+
+# 敏感文件（含内部 IP/userid/人名，不公开发布）
+references/identity-resolution-pitfalls.md
+references/851003-diagnostic.md

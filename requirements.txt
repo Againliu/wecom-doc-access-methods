@@ -1,0 +1,12 @@
+# 企微文档读取 Skill — Python 依赖
+# 安装: pip install -r requirements.txt && playwright install chromium
+#
+# 脚本依赖映射:
+#   playwright  → wecom_doc_reader/, wecom_login.py, wecom_fetch.py
+#   requests    → wecom_doc_auth_check.py (MCP 授权状态检测)
+#
+# 以下脚本仅用标准库，无需额外安装:
+#   check_cookie_expiry.py, report_issue.py, test_wecom_doc_reader.py, validate_extraction.py
+#
+playwright>=1.40.0
+requests>=2.28.0

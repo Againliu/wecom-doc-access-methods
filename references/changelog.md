@@ -1,0 +1,253 @@
+# 更新日志
+
+> 本文件由 SKILL.md 拆分而来(2026-07-21)。
+
+## 更新日志
+
+- **2026-07-17** (v5.1.0): SmartPage 删除 block 验证（浏览器键盘：清空文字+Backspace，跨session持久化）+ 拦截完整删除请求体格式（3步mutation：清空changeset→enabled:false→operation:5移除children）+ API直接删除格式文档化（ret=0但未持久化，原因：Z:0>0$空操作changeset，需用Z:len-len$先清空实际内容；create_timestamp/pad_version在command内部不在顶层；user_infos的name/img_url/corp_id必填）+ 新增references/smartpage-delete-block.md
+  - **w3_ opendoc API 实现**：`reader.py` 新增 `_read_opendoc()` + `_parse_opendoc_response()` + `_decode_wecom_text()` 方法。w3_ 路由从 `_read_dom` 改为 `_read_opendoc`。修复了 canvas 渲染导致 DOM 只能拿到工具栏文字（135/455 字符）的问题
+  - **m4_ 思维导图键盘编辑已验证**：Tab 添加子节点 + 键盘输入修改文本 + 自动保存到服务器（跨 session 验证）。engine 内部 API（171 方法）通过 React fiber 树提取，方法签名已解析（addNode/updateTopic/dfsAllNode/sendCommand）
+  - **p3_ 幻灯片探索**：无 engine 对象，使用 service 架构（canvasService/slideListService/guidesManager/menuManager/themeColorManager）。双击出现 CopyPasteAssist textarea（非编辑器）
+  - **f4_ 流程图探索**：engine 找到（26 方法，仅管 tab）。fileData 是 mxGraph XML 格式。双击后 INPUT 元素出现（可能是节点文本编辑器）
+  - **全面脱敏审查**：删除 8 个内部文档（复盘/探索/architecture），批量替换 222 处敏感信息→0 残留。个人名字→通用称呼，内部路径→`~/.config/` 通用路径，IP/userid/open_id→占位符
+  - **新增脚本** `scripts/audit_identity_isolation.py`：身份隔离合规审计（crontab/cron/skill/SOUL.md/cookie 5 维度）
+  - **同步到 OpenClaw**：安装 `wecom-doc-access-methods` 替代 `wecom-doc`（已禁用）
+  - **公开 Skill 规则**：不包含公司/团队/个人专有信息
+
+- **2026-07-16** (v4.8.0): 🐛 **w3_ opendoc 未实现 + 飞书 OAuth 授权流程验证**
+  - **w3_ opendoc 重大发现**：`wecom_doc_reader` 的 `read()` 方法将 w3_ 路由到 `_read_dom()`（DOM 提取），而非 opendoc API。w3_ 用 canvas 渲染，DOM 只能拿到工具栏文字（135/455 字符）。changelog v2.3.0 声称"改用 opendoc API 提取完整正文"但代码中无 `_read_opendoc` 方法。文档类型表 w3_ 行从 ✅ 改为 ⚠️。**修复方向**：新增 `_read_opendoc()` 方法
+  - **手动构造 scan-login URL 踩坑**：手动拼 `doc.weixin.qq.com/scan-login?return_url=...` 给用户，用户反馈链接访问不了。正确做法：直接用 `wecom_login.py` 生成 QR 码
+  - **脚本执行位置实测**：企微文档脚本在远程 (<server_ip>)，飞书 lark-cli 脚本在本地 Hermes 服务器。不要 SSH 到远程跑 lark-cli
+  - **飞书 OAuth Device Flow 验证**：用 `lark-user-onboard.py --init/--complete` 成功为新企微用户发起飞书 OAuth 授权。bot 无权读用户 wiki（131006），必须用用户 OAuth token
+  - **更新权限铁规章节**：脚本执行位置说明、lark-user-onboard.py 工作流、映射表当前状态
+
+- **2026-07-16** (v4.7.0): 🔒 **身份隔离完整方案 + SOUL.md/USER.md 修复**
+  - **SOUL.md 铁规 9/10/11**：飞书操作前必须调 `lark_check_auth.sh`，企微操作前必须调 `wecom_doc_check_auth.sh`，sender 未知时不做读写
+  - **USER.md 全局名字污染修复**：去掉固定的 `Name: 用户` / `What to call: 团队负责人`，改成动态获取（resolve-and-greet）
+  - **新增身份检查脚本**：`wecom_doc_check_auth.sh`（企微 cookie 检查）+ `lark_check_auth.sh`（飞书 token 检查），均验证拒绝逻辑通过
+  - **per-user cookie 文件**：团队负责人的 cookie 从 `_shared.json` 复制为 `<wecom_userid>.json`（per-user 命名）
+  - **飞书映射表扩展**：从 1 人扩展到 6 人（用户/同事A/同事C/陈杰/刘杰）
+  - **新增 Pitfall**：USER.md 全局名字污染、SOUL.md 可直接 patch
+  - **复盘 cron**：每天凌晨 2:00 检查权限合规性
+  - **核心教训**：写规则不够，LLM 可能不执行——SOUL.md 铁规比 memory 更强制
+
+- **2026-07-16** (v4.6.0): 🚀 **编辑能力全面探索 — 所有文档类型 CRUD + 图片上传 + 浏览器 UI 创建**
+  - **w3_ 微文档 MCP 编辑**：`edit_doc_content` 全量覆写模式，Markdown 格式矩阵（标题1-6级/加粗/斜体/删除线/列表/引用/代码块/表格/链接/分割线/图片/emoji/HTML标签），图片自动下载转 base64 内嵌
+  - **w3_ 微文档浏览器编辑**：增/删/改三项验证成功，`#melo-hidden-editor` 键盘输入自动提交到服务器（`can_edit:1` + `hasWriteProtection:false`），编辑器架构记录（pad.editor/pad.collab/pad.permissionCtrl）
+  - **e3_ 电子表格 MCP 编辑**：`sheet_update_range_data` 格式化矩阵（文本/数字/超链接/公式 + 加粗/斜体/删除线/下划线/颜色/字号/字体名/水平对齐/垂直对齐/组合格式）+ `sheet_append_data` + `sheet_add_sub` + `sheet_delete_sub`
+  - **s3_ 智能表格 MCP 编辑**：17 种字段类型全部创建+值写入成功（TEXT/NUMBER/CHECKBOX/DATE_TIME/SINGLE_SELECT/SELECT/PROGRESS/PHONE_NUMBER/EMAIL/URL/CURRENCY/PERCENTAGE/IMAGE/ATTACHMENT/BARCODE/USER/LOCATION），含属性配置和特殊要求
+  - **图片上传**：发现 8KB 限制是 Hermes 客户端层的，直调 MCP JSON-RPC 可上传任意大小图片（35.3KB 实测，99.3% 质量保持），新增 `scripts/upload_image.py`
+  - **m4_ 思维导图编辑**：纯 canvas 渲染，无 contenteditable/textarea，键盘输入不可行
+  - **p3_ 幻灯片/f4_ 流程图编辑**：canvas/SVG 渲染，只有 CopyPasteAssist 隐藏 textarea，键盘输入不可行
+  - **浏览器 UI 创建**：8 种类型（智能文档/智能表格/文档/表格/幻灯片/收集表/思维导图/流程图），用户是创建者（isCreator:true）
+  - **多用户隔离**：团队负责人要求不同人对话时各自扫码登录，用各自账号权限操作文档
+  - **description 更新**：从"读取 Skill"改为"读取与编辑 Skill"
+  - **新增脚本** `scripts/upload_image.py`：直调 MCP JSON-RPC 上传图片/文件，绕过 8KB 限制
+  - **更新参考文档** `references/wecom-doc-image-embedding.md`：直调 MCP JSON-RPC 方式 + 质量对比 + 各类型文档图片嵌入流程
+- **2026-07-15** (v4.5.5): 🔧 **SmartPage 编辑深度探索 + errcode 851003 pitfall**
+  - **深度探索 SmartPage 编辑**：三条路径（MCP API / 浏览器 DOM / 编辑器内部 API）全部尝试，确认当前条件下无法编程编辑 SmartPage 内容
+  - **关键发现**：`offlineEditAdapter.lastCanWrite === false` 是编辑器不初始化的根因 — bot 创建的 SmartPage，浏览器用户无编辑权限
+  - **编辑器结构记录**：`#root-editable`(contenteditable) / `getEditorService()` / `AppStore.pageStore` / `offlineEditAdapter` / `PageLoaderQueue` / `dop-api/clientvar` — 供未来探索参考
+  - **execCommand 测试**：DOM 文本修改成功但无保存请求（编辑器未初始化，不触发协同保存）
+  - **新增 Pitfall**：errcode 851003 — bot 编辑用户创建的文档报权限错误，bot 只能编辑自己创建的文档
+  - **用户偏好整合**：团队负责人要求"不要每次新建文档地址"+"智能文档排版优于普通文档但无法编辑" → 实际策略：需反复修改的文档整合到用户已有的普通文档中
+  - **更新日志也更新了** v4.5.4 中"SmartPage 无编辑接口"条目为"完整探索结论"
+  - **新增 Pitfall**：SmartPage（智能文档）无编辑接口 — `smartpage_create` 创建后无法用 `edit_doc_content` 修改，每次只能新建 → URL 变化。团队负责人说"他总是搞新的文档地址，要在原来的文档上改"。需迭代修改的文档用 `create_doc`（doc_type=3）+ `edit_doc_content`
+  - **MCP 检测频率从每 6 小时提到每小时**（`17 * * * *`）：用户 out-of-band 要求"那MCP的授权检查频率提高到1小时1次吧"
+  - 同步更新 SKILL.md 中所有"每 6 小时"引用 + 脚本 docstring
+
+- **2026-07-15** (v4.5.3): 🔧 **授权检测提前预警 + 频率提升**
+  - **用户要求**：团队负责人说"以后你过期前就提醒我，不要过期了再跟我说"
+  - **cookie 预警提前**：从剩余 ≤2 天改为 ≤4 天（7 天寿命过半即提醒）
+  - **MCP 检测频率提升**：从每天 1 次（09:17）改为每 6 小时（2:17/8:17/14:17/20:17），与企微同步 cron 对齐
+  - **授权历史追踪**：新增 `_auth_history.json` 记录 `last_ok_time`，过期告警时显示"上次正常是 X 天前"
+  - **关键洞察**：MCP 851014 是状态突变（非时间到期），无法提前预警 — 只能靠提高检测频率缩短"过期→发现"窗口
+  - 同步更新 skill 内 `scripts/wecom_doc_auth_check.py` 副本
+
+- **2026-07-07** (v4.5.2): 🚀 **check() 用 HTTP 替代 Playwright — 10x 更快更稳定**
+  - **重构** `reader.py check()` 方法：动态检查从启动 Chromium 改为 httpx HTTP 请求
+  - **性能提升**：0.4s vs 3-5s（10x+），内存 5MB vs 200MB
+  - **稳定性提升**：不依赖 Chromium 二进制，不依赖 Playwright 环境，cron sanitized 环境完全兼容
+  - **验证逻辑**：cookies 有效 → status 200 + 未跳转 login；cookies 过期 → 302 跳转 login 或 body 含 login 标记
+  - **影响范围**：仅 `check()` 方法，`read()` 仍用 Playwright（需要 DOM 渲染和 JS 执行）
+  - **来源**：另一个 Agent 建议优化 — check() 只是验证 cookies 有效性，不需要浏览器
+- **2026-07-07** (v4.5.1): 🐛 **异常捕获 + Chromium cron 环境兼容性修复**
+  - **修复** `cli.py main()` 三个命令（login/check/read）的 `asyncio.run()` 无 try/except — 底层异常导致脚本 crash，cron 看到的只是 traceback 而非结构化 JSON。现在异常被捕获并返回带错误原因的 JSON。
+  - **修复** `reader.py check()` 的 `async with async_playwright()` + `chromium.launch()` 在 try/except 外 — Playwright 启动失败时异常穿透到 main() 然后 crash。现在整体包在 try/except 内，启动失败返回 `valid=False` + 具体异常信息。
+  - **修复** 所有 6 处 `chromium.launch()` 缺少 `--disable-dev-shm-usage` — cron sanitized 环境下 `/dev/shm` 可能受限，导致 Chromium 启动失败。现已统一加上。
+  - **新增 Pitfall**：main() 异常捕获 + Playwright 启动保护 + Chromium cron 环境 --disable-dev-shm-usage
+  - **来源**：另一个 Agent 使用本 skill 时发现 — 过去 8 天每天 7:00 cron 报同一 traceback，真因被 shell 脚本错误信息截断（[:300] 取了文件路径行号而非实际异常），修复后明天就能看到真正的异常信息
+- **2026-07-01** (v4.5.0): 🔄 **自动重试机制 — 两层重试架构**
+  - **新增** `read()` 顶层重试（L2）：偶发失败自动重试最多 3 次（指数退避 2s/4s），认证/权限类错误不重试
+  - **新增** `_read_smartsheet()` 子表级重试（L1）：每个子表独立重试最多 3 次（2s 固定退避），不影响其他子表
+  - **新增** `_is_retryable_error()` 函数：区分可重试错误（JSON 解析、网络超时、base64 解码截断）和不可重试错误（cookies 过期、无权限、未登录）
+  - **新增** 环境变量配置：`WECOM_RETRY_MAX` / `WECOM_RETRY_DELAY` / `WECOM_RETRY_SHEET_MAX`
+  - **新增** 返回值字段：`retry_succeeded_on_attempt` / `retries_exhausted` / `retry_count` / `partial_success`
+  - **新增** SKILL.md「自动重试机制」章节：两层架构说明、不可重试错误表、环境变量、调用方指引
+  - **动机**：其他 Agent 使用本 skill 时偶发 JSON 解析失败导致晨报采集中断，根因是网络抖动/响应截断等偶发性问题，重试即可恢复
+- **2026-06-30** (v4.4.0): 🔧 **模块化拆分 — 单文件 2311 行 → 7 模块 package**
+  - **拆分** `scripts/wecom_doc_reader.py`（2311 行）→ `scripts/wecom_doc_reader/` package（7 个模块）
+    - `__init__.py`（91 行）— 聚合 re-export，保持 `from wecom_doc_reader import WeComDocReader` 等所有外部 API 完全兼容
+    - `__main__.py`（6 行）— 支持 `python3 -m wecom_doc_reader` CLI 入口
+    - `constants.py`（66 行）— 字段类型常量、URL 映射、DOM 选择器、版本号
+    - `utils.py`（20 行）— `_auto_report()` GitHub issue 自动反馈
+    - `parsers.py`（146 行）— `parse_doc_url()`、`_cell_value()`、`_parse_column_defs()`、`_block_fonts()`、`_is_login_page()`
+    - `reader.py`（1899 行）— `WeComDocReader` 类（含多策略 read、dop-api、思维导图、用户管理）
+    - `cli.py`（192 行）— `_legacy_main()`、`_legacy_login()`、`main()` CLI 入口
+  - **兼容性保证**：`from wecom_doc_reader import WeComDocReader, parse_doc_url, _parse_column_defs, _cell_value, _FIELD_TYPE_TEXT, _FIELD_TYPE_SELECT` 等所有外部 import 路径完全不变
+  - **CLI 变化**：`python3 wecom_doc_reader.py` → `python3 -m wecom_doc_reader`
+  - **验证**：19/19 离线测试全部通过，所有外部 API 符号 import 验证成功
+  - **修复文档**：`_decode_wecom_text()` 函数引用已更新（该函数在早期重构中已删除，文档未同步）
+- **2026-06-29** (v4.3.0): 🔧 **工程规范升级 — 依赖声明 + 冗余清理 + Cookie 检查部署指南**
+  - 新增 `requirements.txt`（声明 playwright + requests 两个第三方依赖，含脚本依赖映射注释）
+  - 删除 `scripts/wecom_reader.py`（已废弃，功能完全被 `wecom_doc_reader.py` 覆盖）
+  - 更新 `scripts/wecom_fetch.py` 描述为「底层 dop-api 调试工具」（原标注不够准确）
+  - 新增「Cookie 与授权状态定时检查」章节：完整的 cron 部署指南（Hermes cron + 系统 crontab 两种方式）、配置说明、续期操作步骤
+  - README.md 英文/中文脚本表同步更新（删除 wecom_reader.py，更新 wecom_fetch.py 描述）
+- **2026-06-29** (v4.1.5): 🔄 **推荐策略调整 — 浏览器 dop-api 上升为首选方案**
+  - **用户要求**：团队负责人明确指示"以后优先用 wecom-doc-access-methods skill 获取微文档内容"（指浏览器 dop-api 方案）
+  - **调整内容**：
+    - "方案速查"表格新增"推荐度"列，Playwright dop-api 标为 ✅ 首选，MCP 标为 ⚠️ fallback
+    - 方案编号调整：Playwright dop-api → 方案一（首选），MCP → 方案二（fallback）
+    - 方案标题加注：（首选）/（fallback）
+    - MCP 方案说明加警告：仅用于快速浏览/简单场景，多子表有 `|` 列错位风险
+    - "适用场景"更新：第一条明确"优先使用浏览器 dop-api 方案"
+  - **背景**：MCP `get_doc_content` 返回 Markdown 纯文本，技术工单表 24 子表实测中 31-39 列旧格式子表因 `|` 字符大量列错位。dop-api 返回结构化 JSON 无此问题。
+  - **注**：写操作仍用 MCP（浏览器方案只读）
+- **2026-06-29** (v4.1.4): 📄 **MCP get_doc_content 多子表 Markdown 解析 pitfalls + 参考文档**
+  - **新增 Pitfall**：MCP `get_doc_content(type=2)` 返回多子表拼接 Markdown 时的 5 个陷阱
+  - **陷阱 1**：不同子表列数不同（同一文档 24 子表有 3 种列结构：25列/31-39列/12-14列），必须逐表独立解析表头
+  - **陷阱 2**：单元格内 `|` 字符导致 Markdown 列错位，31-39列旧格式子表受影响最严重
+  - **陷阱 3**：排序子表标记后再计算范围会破坏边界（排序后相邻标记在原文不相邻，end_line 可能 < start_line）
+  - **陷阱 4**：重复子表检测（实测发现两个子表数据完全重复）
+  - **陷阱 5**：列名模糊匹配（"故障模块" vs "产品模块"）
+  - **新增参考文档** `references/mcp-get-doc-content-multisheet-parsing.md`：含解析脚本模板、数据质量检查清单、与 smartsheet_get_records 对比表
+  - **背景**：用户要求按子表（日期段）梳理技术工单表中 App 相关问题。初次解析只按第一个子表格式处理，遗漏大量数据；后续按时间排序后解析，边界计算错误产出 10000+ 条假数据；最终按原始顺序逐表解析才正确
+- **2026-06-27** (v4.1.3): 🔧 **三文件同步 pitfall + 误告警根因修复 + cron 脚本路径修复 + 冗余 cron 合并**
+  - **新增 Pitfall**：三个 cookie 文件（`_shared.json` / `wecom_browser_state.json` / `wecom_cookies.json`）必须同步更新
+  - **踩坑场景**：扫码续期只更新了前两个文件，漏了 `wecom_cookies.json` → cron 读旧文件报"剩余 1.6 天"误告警 → 用户困惑
+  - **修复**：`wecom_auto_renew.py` 改为优先读 `_shared.json`，续期时同时写两个文件
+  - **铁规**：任何 cookie 更新操作后，必须验证三个文件的 `wedoc_sid` expires 时间一致
+  - **更新续期命令**：`cp` 从 2 个文件改为 3 个文件
+  - **新增 Pitfall**：Hermes cron `no_agent=true` 的 `script` 参数必须是**相对文件名**（如 `wecom_doc_auth_check.py`），不是 shell 命令。写成 shell 命令会导致 `Script not found` 静默失败（cron `693f2df31eb8` 自创建以来一直 error）
+  - **新增 Pitfall**：不要为同一检查创建多个 cron。删除冗余的 LLM 驱动 cookie 检查 cron（`327db8642204`），保留纯脚本 cron（`693f2df31eb8`）统一检查 cookie + MCP 授权
+- **2026-06-26** (v4.1.2): 🔧 **认证机制区分 + cookie 主动提醒**
+  - **新增 Pitfall**: 不要混淆三种认证机制（飞书 token / 企微 MCP 授权 851014 / 企微浏览器 cookie storage_state）— 踩坑场景：用户说"扫码续期"，误启动飞书 lark-cli QR 登录，实际是企微浏览器 cookie 续期
+  - **新增主动提醒机制**: cookie 到期前 2 天主动通知用户扫码续期（团队负责人要求机器人及时提醒）
+  - **新增生产环境 storage_state 路径**: `~/.config/wecom-doc/states/_shared.json`（主力）+ `~/.config/wecom-doc/workspace/wecom_browser_state.json`（备用）
+  - **新增脚本** `scripts/check_cookie_expiry.py`: 检查 cookie 剩余天数，距过期 ≤N 天输出警告，供 cron 主动提醒
+  - **背景**: 企微文档浏览器 cookie 约 2 周过期，之前没有主动提醒机制，总是等过期了才发现
+  - **新增 `_read_mind` 方法**：通过 `dop-api/get/mind` API 提取完整 JSON 节点树
+  - **路由**：`read()` 方法自动识别 `m4_` 前缀，路由到 `_read_mind`
+  - **实测修正**：`initialAttributedText.text` 是 JSON 字符串（非数组），结构为 `{content: [{rootTopic: {...}}]}`
+  - **修正**：子节点在 `children.attached` 数组中（非直接在 `children` 下）
+  - **修正**：`_extract_mind_nodes` 递归方法适配 `children.attached` 结构
+  - **实测**：超级棉田设备关联情况（68 节点，6 层深度，完整设备→轮灌组→阀体编号层级）
+  - **更新**：`references/m4-mind-extraction.md` 反映实测真实结构
+  - **背景**：另一个 Agent 反馈 m4_ 思维导图读取走 DOM 兜底，只能拿到工具栏文字，团队负责人要求修复
+- **2026-06-15** (v4.0.2): 🔧 **合并单元格填充修复**
+  - **修复**：mergeList 行号是 sheet 级别（0=表头行），但 records 数组是数据级别（0=第一条数据），之前未做偏移转换导致合并填充全部失败
+  - **修复**：新增合并填充逻辑 — 遍历 mergeList，将起始单元格的值填充到合并范围内的所有空格
+  - **验证**：354/354 合并填充检查通过，0 失败；灌溉日志地块名、时间类型等全部正确填充
+  - **验证**：图片 URL 全部有效（HTTP 200, image/jpeg）；15/15 子表 1443 行数据完整
+  - **教训**：mergeList 行号偏移是最容易踩的坑，必须用 ground-truth 验证（逐行看 col_0 是否都有值）
+- **2026-06-15** (v4.0.1): 🔍 **新增 ground-truth 验证 Pitfall + 验证脚本**
+  - **新增 Pitfall**：数据完整性验证 ≠ 表面指标（行数+合并数+图片数≠数据正确）
+  - **新增脚本** `scripts/validate_extraction.py`：导出指定子表前 N 行为 CSV，附 5 项验证清单（表头完整性、日期格式、合并区域、图片URL、公式结果）
+  - **背景**：v4.0.0 报告"15/15 成功、1443 条"但团队负责人追问"你怎么知道每个单元格的值是对的？"——答不上来。教训：表面指标只能证明程序跑通，不能证明数据正确
+- **2026-06-15** (v4.0.0): 🚀 **原生 JS API 完整实现 + 全量验证**
+  - **新增 `_read_all_sheets_via_native_api()`**：逐 tab 切换 + `getCellDataAtPosition` 批量读取全部 cell
+  - **日期自动转换**：Excel serial number (如 46030) → ISO 日期 (2026-01-08)，含表头行
+  - **公式/富文本提取**：`getFormattedValue()` 拿纯文本，不再返回复杂 dict 对象
+  - **图片原始 URL**：`getExtendedValue()` 提取 `https://wdcdn.qpic.cn/...?w=4096&h=2304`
+  - **合并单元格精确范围**：`getMergeReference()` 返回 `{startRow, endRow, startCol, endCol}`
+  - **全量实测**：15/15 子表成功，1443 条记录，226 个合并单元格，9 个图片 URL
+  - **降级策略**：原生 API → xlsx 导出 → 剪贴板 HTML → DOM
+  - **性能**：800 cells < 1ms（JS 端），总耗时 ~97s（主要 tab 切换等待）
+- **2026-06-15** (v3.1.0): 🚨 **发现 e3_ 原生 JS API — 最佳方案**
+  - **发现 `getCellDataAtPosition(row, col)`**：企微表格引擎原生 API，直接从内存读单元格值
+  - `cell.getValue()` 返回值（800 cells < 1ms）、`cell.getMergeReference()` 精确合并范围、`cell.getExtendedValue()` 图片原始 URL
+  - 废弃剪贴板 HTML 作为主力（图片列丢原始 URL、合并边界不精确、依赖模拟键盘）
+  - 废弃 dop-api JSON 解析（e3_ 返回 protobuf 二进制）
+  - 限制：非活跃 tab 需先切换+等 5 秒加载
+  - 新增 `references/e3-native-js-api.md` 完整参考文档
+  - 新增 Pitfall：Skill 建设铁规 — 未实测的代码不准写进方案
+- **2026-06-15** (v3.0.0): 🚨 **实测重构 e3_ 读取方案**
+  - **废弃 `_try_dop_for_spreadsheet`**：实测确认 e3_ 的 dop-api 返回 protobuf 二进制（非 JSON），v2.x 的 JSON.parse 代码从未真正跑通过
+  - **新增 `_get_js_runtime_sheets()`**：从 `SpreadsheetApp.workbook` JS 运行时提取 sheet 列表/名称/mergeList/图片URL
+  - **重写 `_read_spreadsheet`**：JS Runtime 元数据 + 剪贴板 HTML 为主路径，xlsx/TSV/DOM 为降级
+  - **实测验证**：15 子表全量读取成功，684 条记录，JS Runtime 元数据正确匹配每个 sheetId
+  - **版本号**：`wecom_doc_reader.py` → v3.0.0
+  - **🚨 铁规：e3_ 表格 dop-api 必须先试**：另一个 Agent 用本 skill 读 e3_ 文档，只用了 TSV 导致数据质量严重不可用（列错位、表头丢失、合并结构消失）。团队负责人明确要求：必须从数据源头（dop-api）获取完整、准确、充分的数据
+  - **e3_ dop-api 可用率比预期高**：部分较新的 e3_ 文档通过 `startrow=0` 可返回 JSON（非 protobuf），与 s3_ 解析方式完全一致。更新 `references/e3-spreadsheet-fallback.md` 策略1 从"大多数失败"改为"先试"
+  - **含图片/附件列的子表必须 dop-api**：剪贴板只复制 base64 图片，截图+OCR 也不行（缩略图模糊不完整）。"宣传工作日志"实测验证
+  - **TSV 明确标为不合格方案**：仅作为最后兜底，不可作为 e3_ 表格的主力读取方式
+  - **k31 类型映射待补充**：图片/附件列的类型 ID 尚未确认
+- **2026-06-15** (v2.7.1):
+  - **多子表 HTML 遍历全量验证**：15 个子表实测 14/15 成功，668 条记录，164 个合并单元格正确还原
+  - **新增 Pitfall**：xlsx 导出需要编辑权限（只读文档自动降级）
+  - **新增 Pitfall**：文件菜单按钮 DOM ID 是 `#headerbar-filemenu`，在 viewport 外需用 JS click
+  - **新增 Pitfall**：`async_playwright()` 必须带括号
+  - **新增 Pitfall**：验证充分性原则——多子表必须全量遍历，不能只测一个子表就声称成功
+  - **e3-spreadsheet-fallback.md**：补充完整 15 子表测试数据表
+- **2026-06-15** (v2.7.0):
+  - **e3_ 五级降级策略**：新增剪贴板 HTML（策略2）和 xlsx 导出（策略3），解决合并单元格解析问题
+  - **剪贴板 HTML**：`navigator.clipboard.read()` 读 `text/html` MIME，解析 `<table>` 的 `colspan`/`rowspan`，展开合并单元格为二维矩阵
+  - **xlsx 导出**：Playwright 触发"文件→导出为→Excel"→ openpyxl 解析 `merged_cells.ranges`，完整保留合并结构 + 所有子表
+  - **context 权限**：`_read_spreadsheet` 的 context 创建时统一加 `permissions=["clipboard-read", "clipboard-write"]`
+  - **公共方法**：提取 `_do_ctrl_a_c()` 统一处理隐藏遮罩 + mouse.click + Ctrl+A/C
+  - **修复来源**：另一个 Agent 反馈灌溉日志等子表合并单元格丢失、列名混入数据行、列错位严重
+- **2026-06-15** (v2.6.1):
+  - 在 Pitfalls 中增加**完整性验证**条目：不要凭记忆列清单，必须交叉验证官方文档+实际测试
+- **2026-06-15** (v2.6.0):
+  - **文档类型完整性**：新增"汇报"和"智能文档"两种类型（共 9 种），标注 API 创建限制（仅 3 种）
+  - **新增 Pitfall**：不要假设已覆盖所有文档类型，需交叉验证官方 API + UI
+  - 账号权限隔离完整验证：并发锁、用户隔离、目录隔离全部通过
+- **2026-06-15** (v2.5.0):
+  - **s3_ 多子表默认行为调整**：默认读取所有子表（包括隐藏的），可通过 sheet_id 指定单个
+  - **w3_ HYPERLINK 清理增强**：支持 4 种格式（带控制字符、带参数、无引号、残留关键字）
+  - **e3_ 多子表等待时间优化**：从 3s 增加到 5s，确保 canvas 完全渲染
+  - 账号权限隔离完整验证：并发锁、用户隔离、目录隔离
+- **2026-06-15** (v2.4.0):
+  - **s3_ 多子表自动遍历**：不指定 tab 时自动读取所有非隐藏子表，每条记录带 `_sheet_id` 标识来源
+  - **e3_ 多子表自动遍历**：检测 `.tab-bar-item-title` 元素，逐个切换 tab 并剪贴板提取
+  - **w3_ 微文档**：opendoc API 完整解析（canvas 渲染，10000+ 字符文档）
+  - **m4_ 思维导图**：dop-api/get/mind JSON 节点树递归提取
+  - **字段类型常量修正**：SELECT=17（不是 3），FORMULA=19（不是 15）
+  - **用户隔离架构**：per-user cookies 独立存储
+  - 更新 `references/e3-spreadsheet-fallback.md`：剪贴板提取实现细节（mouse.click 替代 canvas.click，permissions 在 context 创建时授予）
+  - 更新 `references/dop-api-data-structure.md`：字段类型常量全量验证 + 新建子表延迟问题
+- **2026-06-15** (v2.3.0):
+  - **w3_ 微文档**：发现 canvas 渲染，DOM 无效，改用 opendoc API 提取完整正文
+  - **m4_ 思维导图**：新增 dop-api/get/mind 提取（JSON 节点树递归）
+  - **字段类型常量**：实测验证完整列表（TEXT=1, NUMBER=2, SELECT=3/17, DATE=5, USER=10, EDITOR=11, CREATED_AT=12, UPDATED_AT=13, FORMULA=19）
+  - 新增 `references/w3-opendoc-extraction.md` — opendoc 自定义格式解析 + %uXXXX 解码
+  - 新增 `references/m4-mind-extraction.md` — 思维导图节点树提取
+  - 更新 `references/dop-api-data-structure.md` — 字段类型常量全量验证 + 新建子表延迟问题
+- **2026-06-14** (v2.2.0):
+  - e3_ 电子表格三级降级读取：dop-api → 剪贴板 TSV → DOM 文本
+  - `wecom_doc_reader.py` 升级到 1195 行，新增 `_read_spreadsheet` / `_try_dop_for_spreadsheet` / `_try_clipboard_for_spreadsheet`
+  - 新增 lark-cli `--format json` 读写分离 pitfall（读加写不加）
+  - 新增 `references/wecom-media-delivery-debug.md` 指针
+- **2026-06-14** (v2.1.0):
+  - `wecom_doc_reader.py` 升级到 v2.0（810→935行）：用户隔离版 + 向后兼容老 CLI
+  - 老版 CLI（`check`/`login`/`fetch`/`fetch-sheet`/`list`）自动检测并路由到 `_legacy_main()`
+  - 新版 CLI（`--state-dir` + `login/check/read <user_id>`）支持 per-user 隔离
+  - 新增 `references/wecom-messaging.md` — WeCom 图片/文件发送完整指南
+  - 新增 `references/wecom-messaging.md` 指针到支持文件列表
+- **2026-05-28**：
+  - ~~`startrow=0` 主动 fetch 返回的 `text[0].smartsheet` 是 **JSON 字符串**（需 `JSON.parse()`）~~ — **2026-06-29 推翻：实际是 base64+zlib 压缩格式，需 `urlsafe_b64decode + zlib.decompress`**
+  - 新增企微文档完整类型列表（7 种：DOC/SHEET/SMARTSHEET/FORM/SLIDE/MIND/FLOWCHART）
+  - 新增用户隔离架构章节（多用户 Agent 系统必做）
+  - 更新 dop-api-data-structure.md 参考文档
+- **v2.0.0 (2026-06-13)**: 整合 wecom-smartsheet-browser-sync + dop-api-data-structure，去除项目特定内容，改为通用 skill
+- **v1.0.0 (2026-05-28)**: 初始版本
+- **2026-06-29** (v4.2.0):
+  - **重大修正**：`startrow=0` 主动 fetch 返回的 `smartsheet` 字段是 **base64+zlib 压缩格式**（以 `eJ` 开头），不是 JSON 字符串。推翻 v2.0.0 (2026-06-13) 的错误结论
+  - **关键发现**：主动 fetch 必须传完整参数集（`xsrf`, `needSheetState=2`, `rev`, `optimizedVer=2`, `chunkCellSize=15000`, `enableChunkRank=1`, `enablePermOpt=0`），否则返回 `retcode 538002`
+  - **xsrf 获取方案**：拦截页面首次 `get/sheet` 请求的 URL 参数获取，不能硬编码
+  - **多子表方案**：从 `collab_client_vars.initialAttributedText.text[0].workbook` 获取子表列表，用同一套参数+不同 `subId` 遍历所有子表，不需要切换 tab
+  - **bug 修复**：`_parse_column_defs` 中 `k3 = k17.get("3") or k3.get("k3")` → 修正为 `k17.get("k3")`（typo 导致 UnboundLocalError）
+  - `wecom_doc_reader.py` `_read_smartsheet` 方法完全重写：拦截参数 → 获取 workbook → 遍历子表 → base64+zlib 解码 → 结构化输出
+  - 新增多子表返回格式（`sheets` 数组），单子表保持向后兼容
+  - SKILL.md 方式 B 代码示例和说明完全更新
