@@ -123,7 +123,7 @@ python3 scripts/upload_image.py /tmp/test.png <docid>
 ```bash
 # 扫描发布文件不含敏感信息
 cd /tmp/wecom-test
-find . -type f ! -path './.git/*' | xargs grep -lE 'apikey=[A-Za-z0-9]{20,}|woTrRWDA|106\.53\.' 2>/dev/null
+find . -type f ! -path './.git/*' | xargs grep -lE 'apikey=[A-Za-z0-9]{20,}|<wecom_userid_prefix>|106\.53\.' 2>/dev/null
 ```
 **预期**：无输出（0 拋留）
 
@@ -231,9 +231,9 @@ gh issue create --repo Againliu/wecom-doc-access-methods \
 
 ### 方式 B：飞书文档结果汇总表
 
-测试结果会汇总到飞书文档：https://xag-1024.feishu.cn/docx/VxQ1dXkoaoWHMHxC5JwczdsBnUe
+测试结果会汇总到飞书文档：<your_feishu_test_doc_url>
 
-AI 工具可将自己的结果行追加到下方表格（如有飞书 API 权限），或由李雷（AI 助手）从 GitHub Issues 收集后统一更新。
+AI 工具可将自己的结果行追加到下方表格（如有飞书 API 权限），或由 AI 助手从 GitHub Issues 收集后统一更新。
 
 ### 结果汇总
 

@@ -558,7 +558,7 @@ python3 -c "from PIL import Image; img=Image.open('/tmp/wecom_qr.png'); img.conv
 - 或重新走首次授权流程（QR 生成→扫码→保存）
 
 **已知成员新 userid**：通过 `resolve-and-greet` 确认身份后,直接从 `_shared.json` 复制 per-user 文件,不需要重新扫码
-**当前状态**：飞书映射表 6 人（用户/同事A/同事C/陈杰/刘杰 + 1人），企微 cookie 团队负责人_shared.json + per-user 文件。lark-as-user.sh 已验证可用。
+**当前状态**：飞书映射表 6 人（用户/同事A/同事C/同事D/同事E + 1人），企微 cookie 团队负责人_shared.json + per-user 文件。lark-as-user.sh 已验证可用。
 
 **🚨 脚本执行位置（2026-07-16 实测）**：
 - **企微文档脚本**（`wecom_doc_check_auth.sh` / `wecom_login.py` / `wecom_doc_reader`）→ 在**远程服务器** `ssh -p <ssh_port> root@<server_ip>` 上运行。cookie 文件存储在远程 `~/.config/wecom-doc/states/`。

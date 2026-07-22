@@ -26,7 +26,7 @@
   - **USER.md 全局名字污染修复**：去掉固定的 `Name: 用户` / `What to call: 团队负责人`，改成动态获取（resolve-and-greet）
   - **新增身份检查脚本**：`wecom_doc_check_auth.sh`（企微 cookie 检查）+ `lark_check_auth.sh`（飞书 token 检查），均验证拒绝逻辑通过
   - **per-user cookie 文件**：团队负责人的 cookie 从 `_shared.json` 复制为 `<wecom_userid>.json`（per-user 命名）
-  - **飞书映射表扩展**：从 1 人扩展到 6 人（用户/同事A/同事C/陈杰/刘杰）
+  - **飞书映射表扩展**：从 1 人扩展到 6 人（用户/同事A/同事C/同事D/同事E）
   - **新增 Pitfall**：USER.md 全局名字污染、SOUL.md 可直接 patch
   - **复盘 cron**：每天凌晨 2:00 检查权限合规性
   - **核心教训**：写规则不够，LLM 可能不执行——SOUL.md 铁规比 memory 更强制
