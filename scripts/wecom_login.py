@@ -20,13 +20,23 @@ import asyncio, json, os, sys, time, argparse
 from playwright.async_api import async_playwright
 
 
-def write_status(status, msg=""):
+def write_status(status, msg="", status_file=None):
     data = {"status": status, "msg": msg, "ts": time.time()}
-    print(json.dumps(data, ensure_ascii=False), flush=True)
+    line = json.dumps(data, ensure_ascii=False)
+    print(line, flush=True)
+    if status_file:
+        try:
+            with open(status_file, "w") as f:
+                json.dump(data, f, ensure_ascii=False)
+        except Exception:
+            pass
 
 
-async def main(state_file, qr_file, timeout_sec):
-    write_status("starting", "启动 Playwright")
+async def main(state_file, qr_file, timeout_sec, status_file=None):
+    def ws(status, msg=""):
+        write_status(status, msg, status_file)
+
+    ws("starting", "启动 Playwright")
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
@@ -44,9 +54,9 @@ async def main(state_file, qr_file, timeout_sec):
                         with open(qr_file, "wb") as f:
                             f.write(data)
                         qr_captured = True
-                        write_status("qr_ready", f"QR码已保存({len(data)}bytes)到 {qr_file}，请扫码")
+                        ws("qr_ready", f"QR码已保存({len(data)}bytes)到 {qr_file}，请扫码")
                     except Exception as e:
-                        write_status("error", f"QR捕获失败: {e}")
+                        ws("error", f"QR捕获失败: {e}")
 
         page = await browser.new_page(viewport={"width": 800, "height": 600}, bypass_csp=True)
         page.on("response", capture_qr)
@@ -55,11 +65,11 @@ async def main(state_file, qr_file, timeout_sec):
         await page.route("**/*.woff*", lambda route: route.abort())
         await page.route("**/*.ttf", lambda route: route.abort())
 
-        write_status("navigating", "打开登录页")
+        ws("navigating", "打开登录页")
         try:
             await page.goto("https://doc.weixin.qq.com", wait_until="domcontentloaded", timeout=15000)
         except Exception as e:
-            write_status("navigating", f"页面加载中: {e}")
+            ws("navigating", f"页面加载中: {e}")
 
         # 等待 QR 加载（最多 20s）
         for _ in range(20):
@@ -68,12 +78,12 @@ async def main(state_file, qr_file, timeout_sec):
                 break
 
         if not qr_captured:
-            write_status("error", "QR码未能加载")
+            ws("error", "QR码未能加载")
             await browser.close()
             return
 
         # 等待扫码 — 双重判断：URL 变化 + wedoc_sid cookie 出现
-        write_status("waiting_scan", "等待扫码中...")
+        ws("waiting_scan", "等待扫码中...")
         scanned = False
         max_waits = timeout_sec // 2
         for i in range(max_waits):
@@ -92,12 +102,12 @@ async def main(state_file, qr_file, timeout_sec):
                 pass
 
             if url_changed or has_sid:
-                write_status("scanned", f"扫码成功! URL: {current_url}, wedoc_sid: {has_sid}")
+                ws("scanned", f"扫码成功! URL: {current_url}, wedoc_sid: {has_sid}")
                 scanned = True
                 break
 
             if i % 15 == 14:
-                write_status("waiting_scan", f"仍在等待扫码({(i+1)*2}s)...")
+                ws("waiting_scan", f"仍在等待扫码({(i+1)*2}s)...")
 
         if scanned:
             # 等 wedoc_sid 真正写入（最多再等 15s），而不是固定 sleep 5s
@@ -118,11 +128,11 @@ async def main(state_file, qr_file, timeout_sec):
             cookies = state.get("cookies", [])
             sid_found = any(c.get("name") == "wedoc_sid" for c in cookies)
             if sid_found:
-                write_status("success", f"登录成功! 保存了{len(cookies)}条cookies到 {state_file}")
+                ws("success", f"登录成功! 保存了{len(cookies)}条cookies到 {state_file}")
             else:
-                write_status("warning", f"已保存{len(cookies)}条cookies到 {state_file}，但缺少 wedoc_sid，可能登录不完整")
+                ws("warning", f"已保存{len(cookies)}条cookies到 {state_file}，但缺少 wedoc_sid，可能登录不完整")
         else:
-            write_status("timeout", "等待超时，QR码可能已过期")
+            ws("timeout", "等待超时，QR码可能已过期")
 
         await browser.close()
 
@@ -132,6 +142,7 @@ if __name__ == "__main__":
     parser.add_argument("--state", default="./wecom_state.json", help="storage_state 输出路径")
     parser.add_argument("--qr", default="/tmp/wecom_qr.png", help="二维码图片输出路径")
     parser.add_argument("--timeout", type=int, default=300, help="等待扫码超时秒数")
+    parser.add_argument("--status-file", default=None, help="状态文件输出路径（JSON，轮询此文件即可自动检测扫码结果）")
     args = parser.parse_args()
 
-    asyncio.run(main(args.state, args.qr, args.timeout))
+    asyncio.run(main(args.state, args.qr, args.timeout, args.status_file))
