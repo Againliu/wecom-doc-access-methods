@@ -72,7 +72,7 @@ async def main(state_file, qr_file, timeout_sec):
             await browser.close()
             return
 
-        # 等待扫码
+        # 等待扫码 — 双重判断：URL 变化 + wedoc_sid cookie 出现
         write_status("waiting_scan", "等待扫码中...")
         scanned = False
         max_waits = timeout_sec // 2
@@ -80,8 +80,19 @@ async def main(state_file, qr_file, timeout_sec):
             await asyncio.sleep(2)
             current_url = page.url
 
-            if "login" not in current_url.lower() and "scenario" not in current_url.lower():
-                write_status("scanned", f"扫码成功! 跳转到: {current_url}")
+            # 方式1：URL 不再含 login/scenario
+            url_changed = "login" not in current_url.lower() and "scenario" not in current_url.lower()
+
+            # 方式2：cookie 里出现了 wedoc_sid（登录成功的真正标志）
+            has_sid = False
+            try:
+                cookies = await page.context.cookies("https://doc.weixin.qq.com")
+                has_sid = any(c.get("name") == "wedoc_sid" for c in cookies)
+            except Exception:
+                pass
+
+            if url_changed or has_sid:
+                write_status("scanned", f"扫码成功! URL: {current_url}, wedoc_sid: {has_sid}")
                 scanned = True
                 break
 
@@ -89,14 +100,27 @@ async def main(state_file, qr_file, timeout_sec):
                 write_status("waiting_scan", f"仍在等待扫码({(i+1)*2}s)...")
 
         if scanned:
-            await asyncio.sleep(5)
+            # 等 wedoc_sid 真正写入（最多再等 15s），而不是固定 sleep 5s
+            for _ in range(8):
+                await asyncio.sleep(2)
+                try:
+                    cookies = await page.context.cookies("https://doc.weixin.qq.com")
+                    if any(c.get("name") == "wedoc_sid" for c in cookies):
+                        break
+                except Exception:
+                    pass
+
             context = page.context
             state = await context.storage_state()
             with open(state_file, "w") as f:
                 json.dump(state, f, ensure_ascii=False, indent=2)
 
             cookies = state.get("cookies", [])
-            write_status("success", f"登录成功! 保存了{len(cookies)}条cookies到 {state_file}")
+            sid_found = any(c.get("name") == "wedoc_sid" for c in cookies)
+            if sid_found:
+                write_status("success", f"登录成功! 保存了{len(cookies)}条cookies到 {state_file}")
+            else:
+                write_status("warning", f"已保存{len(cookies)}条cookies到 {state_file}，但缺少 wedoc_sid，可能登录不完整")
         else:
             write_status("timeout", "等待超时，QR码可能已过期")
 
