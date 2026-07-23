@@ -17,12 +17,34 @@ WeCom (企业微信) has 10+ document types. The official MCP integration only c
 
 This skill solves all of that in one package. Every method is tested in production — not theoretical.
 
+## Quick Start (30 seconds)
+
+```bash
+# 1. Install
+git clone https://github.com/Againliu/wecom-doc-access-methods.git
+cd wecom-doc-access-methods
+pip install -r requirements.txt && playwright install chromium
+
+# 2. Set your WeCom MCP API key (from admin console → AI Helper → MCP config)
+export WECOM_MCP_APIKEY=your_key_here
+
+# 3. Read any document (browser path — no row limit)
+PYTHONPATH=./scripts python3 -m wecom_doc_reader read \
+  --user <wecom_userid> --url <doc_url> --state /tmp/state.json
+
+# Or write via MCP (no browser needed):
+python3 scripts/wecom_doc_writer.py s3 add --url <url> --sheet-id <id> \
+  --records '[{"标题":"hello"}]'
+```
+
+**Two credential paths**: MCP API key (writes + fast reads) or browser cookie (reads, no row limit, survives MCP token expiry). See [Installation](#installation) for full setup.
+
 ## What Can It Do?
 
 | Doc Type | URL Prefix | Read | Write | Method |
 |----------|-----------|:----:|:----:|--------|
 | **Smart Table** (智能表格) | `s3_` | ✅ | ✅ CRUD | MCP (write) + browser dop-api (read, no row limit) |
-| **Spreadsheet** (电子表格) | `e3_` | ✅ | ✅ range/append | MCP (write) + browser JS API (read, memory-level) |
+|| **Spreadsheet** (电子表格) | `e3_` | ✅ | ✅ range/append + browser mutation API | MCP (range write) + browser JS API (read) + browser mutation API (cell write, v5.3.0) |
 | **Micro-Doc** (微文档) | `w3_` | ✅ | ✅ create/edit* | MCP + browser opendoc API. *Edit only on bot-created docs |
 | **SmartPage** (智能文档) | `/smartdoc/` | ✅ | ✅ create + images | MCP export (read) + MCP create (write). No edit API — recreate |
 | **Mind Map** (思维导图) | `m4_` | ✅ | — | Browser dop-api/get/mind (read only) |
@@ -60,6 +82,15 @@ cd wecom-doc-access-methods
 ```bash
 pip install -r requirements.txt
 ```
+
+**Dependencies** (only 2 packages):
+
+| Package | Version | Used by |
+|---------|---------|---------|
+| `playwright` | ≥1.40.0 | `wecom_doc_reader/`, `wecom_login.py`, `wecom_fetch.py` (browser reads) |
+| `requests` | ≥2.28.0 | `wecom_doc_writer.py`, `wecom_doc_auth_check.py` (MCP JSON-RPC) |
+
+> All other scripts (`check_cookie_expiry.py`, `report_issue.py`, `test_wecom_doc_reader.py`, `validate_extraction.py`) use **Python stdlib only** — zero extra dependencies.
 
 ### Step 3: Install browser (for read paths)
 
@@ -186,6 +217,12 @@ python3 scripts/wecom_doc_writer.py e3 append \
   --url <url> --sheet-id <id> \
   --row '["李四",88]'
 ```
+
+### Spreadsheet (`e3_`) — Browser cell write (mutation API)
+
+For cell-level writes that go through WeCom's OT/mutation sync protocol (verified: reload-persistent), use the browser mutation API. This is useful when you need to write to specific cells beyond MCP's range/append operations.
+
+> See `references/e3-browser-write-research.md` for the full implementation (applyMutation + await commitMutation → WS USER_CHANGES → server persistence).
 
 ### Micro-Doc (`w3_`) — Create + edit
 
@@ -314,7 +351,8 @@ See **`references/testing-plan.md`** — 18 test cases + 7 known-pitfall checks,
 
 | Version | Key Changes |
 |---------|-------------|
-| **v5.2.0** | **Write support**: new `wecom_doc_writer.py` unified write entry (s3_ CRUD, e3_ range/append, w3_ create/edit, SmartPage create + image four-step, uploads). SmartPage image-embedding automated. Security: all credentials → env vars, repo fully desensitized, publish-time secret scanning. E2E test plan. |
+| **v5.3.0** | **Browser write**: e3_ spreadsheet cell-level write via mutation API (applyMutation + await commitMutation → WS USER_CHANGES → server persistence verified). Quick Start + dependency table in README. |
+| v5.2.0 | **Write support**: `wecom_doc_writer.py` unified write entry (s3_ CRUD, e3_ range/append, w3_ create/edit, SmartPage create + image four-step, uploads). Security hardening, E2E test plan. |
 | v5.0.0 | Browser-path reads production-hardened; retry mechanism; auth pre-flight |
 | v4.5.0 | Two-layer auto-retry, exponential backoff |
 | v4.4.0 | Modularization: single 2311-line file → 7-module package |
@@ -326,7 +364,7 @@ See **`references/testing-plan.md`** — 18 test cases + 7 known-pitfall checks,
 
 ## Version
 
-v5.2.0 · Updated 2026-07-22
+v5.3.0 · Updated 2026-07-23
 
 ## License
 
@@ -414,4 +452,4 @@ python3 -m pytest scripts/test_wecom_doc_reader.py -v  # 离线单元测试
 
 ### 版本
 
-v5.2.0 · 2026-07-22 · MIT License
+v5.3.0 · 2026-07-23 · MIT License

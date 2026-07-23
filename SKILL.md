@@ -1,9 +1,9 @@
 ---
 name: wecom-doc-access-methods
-version: 5.2.0
+version: 5.3.0
 description: >
   读取：s3_ 智能表格(dop-api全量)、e3_ 电子表格(原生JS API)、w3_ 微文档(opendoc API完整正文)、m4_ 思维导图(dop-api/get/mind)。
-  编辑：w3_ 微文档(MCP edit_doc_content全量覆写 + 浏览器键盘增删改)、e3_ 电子表格(MCP sheet_*格式化/公式/超链接)、s3_ 智能表格(MCP smartsheet_* 17种字段类型)。
+  编辑：w3_ 微文档(MCP edit_doc_content全量覆写 + 浏览器键盘增删改)、e3_ 电子表格(MCP sheet_* + 浏览器 mutation API 写入)、s3_ 智能表格(MCP smartsheet_* 17种字段类型)。
   图片上传：直调MCP JSON-RPC(无8KB限制，99.3%质量保持)。
   浏览器UI创建：8种类型(智能文档/智能表格/文档/表格/幻灯片/收集表/思维导图/流程图)。
   不可编辑：p3_幻灯片/f4_流程图(方法待探索,非不可行)。m4_思维导图键盘编辑已验证(Tab添加子节点+键盘输入修改文本+自动保存)。SmartPage编辑已验证(submit_command API + EtherPad changeset, 跨session持久化)。SmartPage删除已验证(浏览器键盘清空+Backspace)。
@@ -12,7 +12,7 @@ description: >
 
 # 企微文档稳定读取 — 通用 Skill
 
-> 参考文件：[851003-diagnostic](references/851003-diagnostic.md)（851003 权限错误诊断）、[identity-resolution-pitfalls](references/identity-resolution-pitfalls.md)（身份识别故障排查）、[e3-reader-output-pitfalls](references/e3-reader-output-pitfalls.md)（e3 读取：PYTHONPATH / JSON 前缀 / 表头 / 空行 / tab 定位）、[e3-browser-write-research](references/e3-browser-write-research.md)（e3 浏览器写入 API 调研：setCellDataAtPosition 发现 + 值格式/保存机制待解）
+> 参考文件：[851003-diagnostic](references/851003-diagnostic.md)（851003 权限错误诊断）、[identity-resolution-pitfalls](references/identity-resolution-pitfalls.md)（身份识别故障排查）、[e3-reader-output-pitfalls](references/e3-reader-output-pitfalls.md)（e3 读取：PYTHONPATH / JSON 前缀 / 表头 / 空行 / tab 定位）、[e3-browser-write-research](references/e3-browser-write-research.md)（e3 浏览器写入 API：mutation 模型闭环 — applyMutation + commitMutation + WS USER_CHANGES 持久化验证）
 
 ## Skill 定位与架构（2026-07-16 团队负责人要求）
 
@@ -159,7 +159,7 @@ for sheet_name, sheet_data in sheets.items():
 
 | 方案 | 推荐度 | 数据完整性 | 稳定性 | 写能力 | 维护成本 |
 |------|--------|-----------|--------|--------|----------|
-| **Playwright + dop-api** | **✅ 首选** | ✅ 全量 | ⚠️ 中（cookie ~2周） | ❌ | 中（定期扫码续期） |
+| **Playwright + dop-api** | **✅ 首选** | ✅ 全量 | ⚠️ 中（cookie ~2周） | ⚠️ e3_可写(mutation API) | 中（定期扫码续期） |
 | **MCP API** | ⚠️ fallback | ⚠️ 前2000条 | ✅ 高 | ✅ | 低（授权过期重分享） |
 
 **推荐策略**：**优先用浏览器 dop-api 方案**（结构化 JSON，无列错位风险，全量数据）。MCP `get_doc_content` 返回 Markdown 纯文本，多子表拼接时单元格内 `|` 字符导致列错位（2026-06-29 实测 24 子表技术工单表，31-39 列旧格式子表大量错位），仅作为快速浏览/简单场景的 fallback。需要写操作时用 MCP（浏览器方案只读）。
@@ -182,7 +182,7 @@ for sheet_name, sheet_data in sheets.items():
 | `references/cookie-watchdog.md` | Cookie 与授权状态定时检查(部署方式/配置/续期) | 部署定时检查任务时 |
 | `references/changelog.md` | 完整更新日志 | 追溯版本历史时 |
 | `references/testing-plan.md` | **🆕 E2E 测试方案 v5.2.0**（T1-T18 用例 + 7 个已知坑验证，面向所有主流 AI coding agent。含标准化结果 JSON + GitHub Issues 提交机制） | 验证 skill 安装与读写能力时 |
-| `references/e3-browser-write-research.md` | **🆕 e3 浏览器写入 API 调研**（setCellDataAtPosition 发现、值格式/保存机制待解、insertDimension/deleteDimension） | 实现 e3 浏览器写入时 |
+| `references/e3-browser-write-research.md` | **✅ e3 浏览器写入 API（已闭环）**（mutation 模型：applyMutation + await commitMutation，WS USER_CHANGES 同步，重载持久化验证通过。含完整流程 + pitfall） | 实现 e3 浏览器写入时 |
 
 ### 最高频 Pitfalls 速记(细节见 references/pitfalls.md)
 
@@ -198,6 +198,7 @@ for sheet_name, sheet_data in sheets.items():
 - 🚨 **公开前必须扫描 .py 脚本里的硬编码凭据**（`apikey=`/`secret=`/`token=`），不只是 .md 文档——2026-07-22 实测 `wecom_doc_auth_check.py:36` 的 MCP apikey 漏过 07-17 脱敏审查、在公开 GitHub 仓库暴露。修复：改读 `WECOM_MCP_APIKEY` 环境变量 + 轮换 key + 清 git 历史。详见 skill-building-standard §17.6 + `references/crud-coverage-gap.md` P0
 - 🚨 **MCP list 类接口成功 ≠ apikey 有效**：`tools/list`/`list_prompts` 可能返回连接初始化时的缓存，apikey 已失效也显示"成功"。配 key 后**必须立刻用真实 tools/call 验证**（如对假 URL 调 `get_doc_content`）：errcode 850001 = key 错；851003/851014 = 鉴权通过、文档权限问题。2026-07-22 被缓存假象误导过一次
 - 🚨 **gateway MCP 工具用启动时缓存的凭据**：改了 config.yaml 的 MCP apikey 后，gateway 的 `mcp________*` 工具仍用启动时加载的旧 key（报 850001），而脚本直调（wecom_doc_writer.py 的 `mcp_call`）运行时读 config.yaml 立即生效。改 key 后要么重启 gateway，要么用直调脚本验证/操作——别被 gateway 工具的陈旧凭据缓存误导（2026-07-22 实测：gateway create_doc 报 850001，writer 直调同 key 成功）
+- 🚨 **e3 浏览器写入 mutation 只改属性不替换对象**：`mutationApi.applyMutation` + `commitService.commitMutation` 是 e3_ 浏览器写入的正确路径（OT/Mutation 模型）。mutation 的 `cell` 和 `gridRangeData` 是类实例（有 `isInvalid()`/`getAuthor()` 方法），**只能改标量属性（`.value`/`.startRowIndex` 等），不能替换整个对象为 plain JSON**——替换会丢实例方法导致 `isInvalid is not a function`。commitMutation 返回 **Promise**（不是 generator），必须 `await`。详见 `references/e3-browser-write-research.md`
 - 🚨 **凭据录入后立即逐字符核对**：用户粘贴的长 key 手工转录极易丢字符（2026-07-22 86 位 key 录成 85 位报 850001）。验证失败时先从 state.db `messages.content`（role=user）恢复原文 difflib 比对，不要凭记忆重敲、也不要先怀疑用户的 key 错了
 - 🚨 **GitHub push 必须从技能目录推，不能从 GitLab clone 推**：`publish_skill.sh` 的 GitHub push 是从 `$LOCAL_SKILL`（技能目录自己的 git repo，origin=GitHub）推的。从包含所有 skill 的本地 GitLab clone 推到 GitHub 会覆盖为 172+ 文件 + 内部信息泄露。实测踩坑——force push 从错误 repo 把其他 skill 的文件 + 内部团队信息字样推到了公开 GitHub
 - 🚨 **GIT_HTTP_VERSION=HTTP/1.1 解决 GitHub "Empty reply from server"**：push 到 GitHub 间歇性报 `fatal: Empty reply from server`（网络抖动）。设 `GIT_HTTP_VERSION=HTTP/1.1` 环境变量可解决。`publish_skill.sh` 和手动 push 都适用
