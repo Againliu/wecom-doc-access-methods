@@ -197,6 +197,7 @@ for sheet_name, sheet_data in sheets.items():
 - 🚨 **未实测的代码不准写进方案**(血泪教训)
 - 🚨 **公开前必须扫描 .py 脚本里的硬编码凭据**（`apikey=`/`secret=`/`token=`），不只是 .md 文档——2026-07-22 实测 `wecom_doc_auth_check.py:36` 的 MCP apikey 漏过 07-17 脱敏审查、在公开 GitHub 仓库暴露。修复：改读 `WECOM_MCP_APIKEY` 环境变量 + 轮换 key + 清 git 历史。详见 skill-building-standard §17.6 + `references/crud-coverage-gap.md` P0
 - 🚨 **MCP list 类接口成功 ≠ apikey 有效**：`tools/list`/`list_prompts` 可能返回连接初始化时的缓存，apikey 已失效也显示"成功"。配 key 后**必须立刻用真实 tools/call 验证**（如对假 URL 调 `get_doc_content`）：errcode 850001 = key 错；851003/851014 = 鉴权通过、文档权限问题。2026-07-22 被缓存假象误导过一次
+- 🚨 **gateway MCP 工具用启动时缓存的凭据**：改了 config.yaml 的 MCP apikey 后，gateway 的 `mcp________*` 工具仍用启动时加载的旧 key（报 850001），而脚本直调（wecom_doc_writer.py 的 `mcp_call`）运行时读 config.yaml 立即生效。改 key 后要么重启 gateway，要么用直调脚本验证/操作——别被 gateway 工具的陈旧凭据缓存误导（2026-07-22 实测：gateway create_doc 报 850001，writer 直调同 key 成功）
 - 🚨 **凭据录入后立即逐字符核对**：用户粘贴的长 key 手工转录极易丢字符（2026-07-22 86 位 key 录成 85 位报 850001）。验证失败时先从 state.db `messages.content`（role=user）恢复原文 difflib 比对，不要凭记忆重敲、也不要先怀疑用户的 key 错了
 - 🚨 **GitHub push 必须从技能目录推，不能从 GitLab clone 推**：`publish_skill.sh` 的 GitHub push 是从 `$LOCAL_SKILL`（技能目录自己的 git repo，origin=GitHub）推的。从包含所有 skill 的本地 GitLab clone 推到 GitHub 会覆盖为 172+ 文件 + 内部信息泄露。实测踩坑——force push 从错误 repo 把其他 skill 的文件 + 内部团队信息字样推到了公开 GitHub
 - 🚨 **GIT_HTTP_VERSION=HTTP/1.1 解决 GitHub "Empty reply from server"**：push 到 GitHub 间歇性报 `fatal: Empty reply from server`（网络抖动）。设 `GIT_HTTP_VERSION=HTTP/1.1` 环境变量可解决。`publish_skill.sh` 和手动 push 都适用
