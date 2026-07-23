@@ -289,6 +289,8 @@ python3 scripts/wecom_doc_writer.py upload-file \
 
 ## Troubleshooting
 
+> **Quick diagnosis**: `python3 scripts/wecom_status.py --user <userid>` — checks cookie + MCP key + gives fix suggestions. Full error lookup table: `references/error-mapping.md`.
+
 | Error | Meaning | Fix |
 |-------|---------|-----|
 | `errcode 850001` | Invalid MCP API key | Re-copy the key from WeCom admin console → AI Helper → MCP config. Verify no characters were dropped. |
@@ -329,6 +331,7 @@ See **`references/testing-plan.md`** — 18 test cases + 7 known-pitfall checks,
 | `scripts/validate_extraction.py` | Extracted-data validation |
 | `scripts/test_wecom_doc_reader.py` | Offline test suite |
 | `scripts/report_issue.py` | GitHub issue auto-report with 24h dedup |
+| `scripts/wecom_status.py` | One-shot status check: cookie validity + MCP key validity + smoke test |
 
 ## Reference Documentation
 
@@ -337,6 +340,7 @@ See **`references/testing-plan.md`** — 18 test cases + 7 known-pitfall checks,
 | `references/mcp-api-guide.md` | MCP JSON-RPC direct-call guide: endpoint, payload, error codes |
 | `references/testing-plan.md` | Full E2E test plan for AI agents (18 cases + 7 pitfalls) |
 | `references/pitfalls.md` | All known pitfalls across every doc type |
+| `references/error-mapping.md` | Error lookup: raw error → plain meaning → fix (5 categories) |
 | `references/wecom-doc-image-embedding.md` | SmartPage image embedding four-step details |
 | `references/e3-native-js-api.md` | Spreadsheet `SpreadsheetApp` JS API reference |
 | `references/dop-api-data-structure.md` | Smart table dop-api response structure |

@@ -148,6 +148,10 @@ for sheet_name, sheet_data in sheets.items():
 - 两者都将合并区域内的所有单元格填充为左上角的值
 
 ## 🔒 身份隔离（2026-07-16）
+
+**权限模型（重要）**：企微文档权限分三层——**群聊可见 ≠ 文档可读 ≠ 文档可编辑**。群里能创建文档不代表机器人能读取它（会报 851014）。机器人需要被**明确分享**目标文档才有权限。遇到 851003/851014 时先确认机器人是否被分享该文档。详细错误对照见 `references/error-mapping.md`。
+
+**状态自检**：`python3 scripts/wecom_status.py --user <userid>` 一键检查 cookie 有效性 + MCP key 有效性，输出结构化状态报告和修复建议。
 操作前必须调封装脚本：企微 `python3 ~/.config/wecom-doc/scripts/wecom_auth_flow.py --check <wecom_userid>`，飞书 `python3 ~/.config/wecom-doc/scripts/lark_auth_flow.py --check <wecom_userid>`。脚本内部处理检查/二维码/授权/轮询全流程。定时任务用创建人 cookie（`WECOM_USERID` 环境变量）。
 - `wecom_doc_check_auth.sh` / `lark_check_auth.sh` 已标记 DEPRECATED，功能合并到 auth_flow 脚本
 - 全局 cookie 文件（`_shared.json` / `wecom_browser_state.json` / `wecom_cookies.json`）改为软链接指向团队负责人 per-user 文件
@@ -182,6 +186,7 @@ for sheet_name, sheet_data in sheets.items():
 | `references/cookie-watchdog.md` | Cookie 与授权状态定时检查(部署方式/配置/续期) | 部署定时检查任务时 |
 | `references/changelog.md` | 完整更新日志 | 追溯版本历史时 |
 | `references/testing-plan.md` | **🆕 E2E 测试方案 v5.2.0**（T1-T18 用例 + 7 个已知坑验证，面向所有主流 AI coding agent。含标准化结果 JSON + GitHub Issues 提交机制） | 验证 skill 安装与读写能力时 |
+| `references/error-mapping.md` | **🆕 错误映射表**（原始报错→人话→修复步骤，覆盖 MCP/浏览器/Cookie/SmartPage/集成 5 大类） | 遇到任何报错时先查此表 |
 | `references/e3-browser-write-research.md` | **✅ e3 浏览器写入 API（已闭环）**（mutation 模型：applyMutation + await commitMutation，WS USER_CHANGES 同步，重载持久化验证通过。含完整流程 + pitfall） | 实现 e3 浏览器写入时 |
 
 ### 最高频 Pitfalls 速记(细节见 references/pitfalls.md)
@@ -226,6 +231,8 @@ for sheet_name, sheet_data in sheets.items():
 ## 支持文件
 
 - `references/e3-native-js-api.md` — **🆕 e3_ 原生 JS API 完整参考**（getCellDataAtPosition 用法、cell 方法列表、图片URL、合并范围、日期转换）
+- `references/e3-browser-write-research.md` — **✅ e3 浏览器写入 API（已闭环）**（mutation 模型：applyMutation + await commitMutation → WS USER_CHANGES → 服务端持久化。含完整流程、pitfall、验证记录、探索历程）
+- `scripts/e3_browser_write.py` — **🆕 e3 浏览器写入脚本**（mutation API 写入封装：cookie 加载 → monkey-patch 捕获 → 修改属性 → apply + commit → 读回验证 + 重载持久化验证。`--user <id> --url <e3_url> --row N --col M --value "xxx"`）
 - `references/e3-merge-fill-verification.md` — **🆕 合并填充验证方法论**（三层递进：表面指标→spot-check→ground-truth；mergeList 偏移根因分析）
 - `references/dop-api-data-structure.md` — dop-api 完整数据结构参考（字段类型 ID、行列路径、用户映射、**e3_ protobuf 实测结论**）
 - `references/e3-spreadsheet-fallback.md` — **e3_ 电子表格读取方案 v3.0**（JS Runtime + clipboard HTML，protobuf 实测）
