@@ -1,6 +1,6 @@
 ---
 name: wecom-doc-access-methods
-version: 5.3.1
+version: 5.3.2
 description: >
   读取：s3_ 智能表格(dop-api全量)、e3_ 电子表格(原生JS API)、w3_ 微文档(opendoc API完整正文)、m4_ 思维导图(dop-api/get/mind)。
   编辑：w3_ 微文档(MCP edit_doc_content全量覆写 + 浏览器键盘增删改)、e3_ 电子表格(MCP sheet_* + 浏览器 mutation API 写入)、s3_ 智能表格(MCP smartsheet_* 17种字段类型)。

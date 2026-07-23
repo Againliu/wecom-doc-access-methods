@@ -59,6 +59,11 @@ async def login():
         await browser.close()
 ```
 
+**⚠️ 扫码成功判断不能只看 URL（2026-07-23 修复）**：
+旧代码只检查 `"login" not in page.url.lower()`，但企微跳转后的 URL 可能仍含 `login`/`scenario` 字样（中间跳转页），导致永远检测不到扫码成功 → 等到 timeout → **不保存 cookie**。
+**修复**：双重判断——URL 变化 **或** cookie 里出现 `wedoc_sid`（登录成功的真正标志），任一满足即成功。`wecom_login.py` 已实现此逻辑。
+**`--status-file` 参数**：后台跑 `wecom_login.py --status-file /tmp/login_status.json`，调用方轮询 JSON 文件即可自动检测扫码完成，不需要用户说"扫完了"。状态值：`qr_ready` → `waiting_scan` → `scanned` → `success`/`timeout`/`error`。
+
 ### 步骤 2：检查 cookie 有效性
 
 ```python
