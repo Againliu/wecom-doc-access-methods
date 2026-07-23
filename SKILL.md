@@ -1,6 +1,6 @@
 ---
 name: wecom-doc-access-methods
-version: 5.3.0
+version: 5.3.1
 description: >
   读取：s3_ 智能表格(dop-api全量)、e3_ 电子表格(原生JS API)、w3_ 微文档(opendoc API完整正文)、m4_ 思维导图(dop-api/get/mind)。
   编辑：w3_ 微文档(MCP edit_doc_content全量覆写 + 浏览器键盘增删改)、e3_ 电子表格(MCP sheet_* + 浏览器 mutation API 写入)、s3_ 智能表格(MCP smartsheet_* 17种字段类型)。
@@ -253,6 +253,7 @@ for sheet_name, sheet_data in sheets.items():
 - `scripts/wecom_fetch.py` — 底层 dop-api 调试工具（7 个函数，直接 HTTP 请求 dop-api）
 - `scripts/validate_extraction.py` — **🆕 提取结果 ground-truth 验证**（导出子表前 N 行为 CSV，对照原始文档逐列检查）
 - `scripts/wecom_doc_auth_check.py` — **🆕 授权状态定时检测**（cookie 提前 4 天预警 + MCP 851014 告警 + 授权历史追踪，Hermes cron 每 6 小时跑，有异常才输出）
+- `scripts/wecom_status.py` — **🆕 一键状态自检**（cookie 有效性 + MCP key 有效性 + 可选读写冒烟测试，结构化状态报告 + 每项修复建议。`--user <id> [--test-url <doc_url>] [--json]`。agent 排查"为什么读不了"时先跑这个）
 - `scripts/upload_image.py` — **🆕 图片/文件上传工具（直调 MCP JSON-RPC）**（绕过 Hermes 客户端 8KB 限制，无大小限制，99.3% 质量保持，120s 超时。用法：`python3 upload_image.py <image_path> <docid>` 或 `--file` 上传文件）
 - `scripts/wecom_doc_writer.py` — **🆕 统一写入口 v5.2.0**（s3_ 记录 CRUD / e3_ 范围写+追加 / w3_ 创建+编辑 / SmartPage 创建+带图四步法 / 图片文件上传。纯 requests 直调 MCP JSON-RPC，无 MCP 框架依赖，任意 AI 工具可用。简单数据结构自动包装：2D 数组→CellData、标量→字段值格式；SmartPage 图片用 `![alt](local:/path)` 占位符自动上传替换 CDN URL。`--help` 查全部子命令）
 

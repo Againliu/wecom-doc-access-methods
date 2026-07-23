@@ -355,7 +355,8 @@ See **`references/testing-plan.md`** — 18 test cases + 7 known-pitfall checks,
 
 | Version | Key Changes |
 |---------|-------------|
-| **v5.3.0** | **Browser write**: e3_ spreadsheet cell-level write via mutation API (applyMutation + await commitMutation → WS USER_CHANGES → server persistence verified). Quick Start + dependency table in README. |
+| **v5.3.1** | Error mapping reference (`references/error-mapping.md`), `wecom_status.py` status checker, permission model docs. |
+| v5.3.0 | **Browser write**: e3_ spreadsheet cell-level write via mutation API (applyMutation + await commitMutation → WS USER_CHANGES → server persistence verified). Quick Start + dependency table in README. |
 | v5.2.0 | **Write support**: `wecom_doc_writer.py` unified write entry (s3_ CRUD, e3_ range/append, w3_ create/edit, SmartPage create + image four-step, uploads). Security hardening, E2E test plan. |
 | v5.0.0 | Browser-path reads production-hardened; retry mechanism; auth pre-flight |
 | v4.5.0 | Two-layer auto-retry, exponential backoff |
@@ -368,7 +369,7 @@ See **`references/testing-plan.md`** — 18 test cases + 7 known-pitfall checks,
 
 ## Version
 
-v5.3.0 · Updated 2026-07-23
+v5.3.1 · Updated 2026-07-23
 
 ## License
 
@@ -456,4 +457,4 @@ python3 -m pytest scripts/test_wecom_doc_reader.py -v  # 离线单元测试
 
 ### 版本
 
-v5.3.0 · 2026-07-23 · MIT License
+v5.3.1 · 2026-07-23 · MIT License
