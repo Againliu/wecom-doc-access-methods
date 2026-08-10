@@ -1,6 +1,6 @@
 ---
 name: wecom-doc-access-methods
-version: 5.3.2
+version: 5.4.0
 description: >
   读取：s3_ 智能表格(dop-api全量)、e3_ 电子表格(原生JS API)、w3_ 微文档(opendoc API完整正文)、m4_ 思维导图(dop-api/get/mind)。
   编辑：w3_ 微文档(MCP edit_doc_content全量覆写 + 浏览器键盘增删改)、e3_ 电子表格(MCP sheet_* + 浏览器 mutation API 写入)、s3_ 智能表格(MCP smartsheet_* 17种字段类型)。
@@ -153,7 +153,7 @@ for sheet_name, sheet_data in sheets.items():
 
 **状态自检**：`python3 scripts/wecom_status.py --user <userid>` 一键检查 cookie 有效性 + MCP key 有效性，输出结构化状态报告和修复建议。
 操作前必须调封装脚本：企微 `python3 ~/.config/wecom-doc/scripts/wecom_auth_flow.py --check <wecom_userid>`，飞书 `python3 ~/.config/wecom-doc/scripts/lark_auth_flow.py --check <wecom_userid>`。脚本内部处理检查/二维码/授权/轮询全流程。定时任务用创建人 cookie（`WECOM_USERID` 环境变量）。
-- `wecom_doc_check_auth.sh` / `lark_check_auth.sh` 已标记 DEPRECATED，功能合并到 auth_flow 脚本
+- **扫码自动闭环（v5.4.0 新增）**：`wecom_auth_flow.py --wait-done` 模式让 Agent 自动管理扫码全流程，**不需要用户说"扫完了"**。流程：①Agent 调 `--check` 检查凭证 → ②`auth_required` 时调 `--wait-done` → ③脚本启动 worker、生成 QR、返回 `scan` payload（含 `reply_media` + `poll_command`）→ ④Agent 把二维码发给用户并告知"请扫码，我会自动等待" → ⑤Agent 用返回的 `poll_command` 轮询 `--status` 直到 `completed` 或 `timeout` → ⑥完成或超时后向用户报告结果。`wecom_login.py` 的 `--status-file` 输出 JSON 状态文件（qr_ready→scanned→success/timeout/error），脚本内部自动轮询 `wedoc_sid` cookie 写入。
 - 全局 cookie 文件（`_shared.json` / `wecom_browser_state.json` / `wecom_cookies.json`）改为软链接指向团队负责人 per-user 文件
 - `wecom_auth_flow.py` QR 图片保存到 `~/.config/wecom-doc/workspace/`（企微 MEDIA 白名单目录，可直接发）
 - **定时同步脚本必须设 `LARKSUITE_CLI_CONFIG_DIR`**
@@ -191,6 +191,9 @@ for sheet_name, sheet_data in sheets.items():
 
 ### 最高频 Pitfalls 速记(细节见 references/pitfalls.md)
 
+- 🚨 **长文档/审核报告必须用 SmartPage 智能文档，不用 w3_ 微文档**（2026-07-24 团队负责人明确要求："这个微文档排版很差，要用智能文档"）。w3_ 微文档渲染 Markdown 表格/层级排版差，SmartPage 排版正常。交付报告类内容默认 `wecom_doc_writer.py smartpage create-with-images --title "标题" --markdown @file`
+- 🚨 **smartpage create 的 pages JSON 不支持 @file**：`--pages '[{"page_title":"x","content":"@/path/file.md"}]'` 里的 `@file` 不会被解析，内容会变成字面字符串。必须用 `smartpage create-with-images --markdown @file`（无图片也可用）
+- 🚨 **扫码成功判断不能只看 URL**：企微跳转后 URL 可能仍含 `login`/`scenario`（中间跳转页），URL-only 检测永远等不到 → timeout → 不保存 cookie。修复：URL + `wedoc_sid` cookie 双重判断（OR 关系）。保存前轮询等 `wedoc_sid` 写入（最多 15s），保存后验证 `wedoc_sid` 存在
 - 🚨 **不要混淆三种认证机制**:企微扫码 cookie / 飞书 OAuth / MCP 应用 token,三者独立
 - 🚨 **MCP 失败后必须 fallback 到浏览器方案**,反之亦然,不要死磕单一路径
 - 🚨 **MCP 操作也受身份隔离约束**:只操作当前对话人有权访问的文档
@@ -209,6 +212,8 @@ for sheet_name, sheet_data in sheets.items():
 - 🚨 **GIT_HTTP_VERSION=HTTP/1.1 解决 GitHub "Empty reply from server"**：push 到 GitHub 间歇性报 `fatal: Empty reply from server`（网络抖动）。设 `GIT_HTTP_VERSION=HTTP/1.1` 环境变量可解决。`publish_skill.sh` 和手动 push 都适用
 - 🚨 **脱敏扫描必须包含团队人名和公司名**：publish_skill.sh 的 pattern 不能只有 IP/userid/apikey——还必须包含：团队成员人名、内部域名、内部产品名。否则团队特征信息泄露到公开 GitHub。实测 changelog.md/pitfalls.md 含人名、testing-plan.md 含内部域名，均已清理
 - 🚨 **README 面向用户安装使用，不面向开发者内部**：用户要求 README 完整、通俗、准确——覆盖安装步骤、凭据配置、每类型读写示例（copy-paste）、故障排查表。不写内部实现细节、不提团队名
+- 🚨 **smartpage create --pages 的 JSON content 字段不解析 @file 语法**：`--pages '[{"page_title":"正文","content":"@/path/file.md"}]'` 会把 `@/path/file.md` 当字面字符串写入，不读取文件内容。**改用 `smartpage create-with-images --title "标题" --markdown @/path/file.md`**，该子命令用 `_load_text_arg` 正确解析 @file（2026-07-24 实测：create --pages 写入字面路径，create-with-images 正确写入全文）
+- 🚨 **报告类文档优先用 SmartPage（智能文档），不用 w3_ 微文档**：用户明确反馈「微文档排版很差，要用智能文档」。审核报告/分析报告/总结类文档 → SmartPage；w3_ 微文档仅用于纯文本草稿或简单内容（2026-07-24 用户反馈）
 
 ---
 
@@ -216,7 +221,7 @@ for sheet_name, sheet_data in sheets.items():
 
 | 错误码 | 含义 | 解决方案 |
 |--------|------|----------|
-| 850001 | MCP apikey 无效 | key 本身错误——核对录入是否丢/多字符（与原始消息逐字符 diff，见下）、或后台又轮换过；从机器人后台重新复制完整 StreamableHTTP URL |
+| 850001 | MCP apikey 无效 | **先区分报错来源**：若 gateway `mcp________*` 工具报 850001 但脚本直调（wecom_doc_writer.py）正常 → gateway 启动时缓存了旧 key，用 writer 直调或重启 gateway（见上方 pitfalls 速记）；否则 key 本身错误——核对录入是否丢/多字符（与原始消息逐字符 diff，见下）、或后台又轮换过；从机器人后台重新复制完整 StreamableHTTP URL |
 | 851014 | MCP 授权过期 | 重新分享文档给机器人，或切浏览器方案 |
 | 2200063 | MCP 授权过期（另一种） | 同上 |
 | 851000 | 文档格式不支持（e3_） | 用浏览器方案 |
@@ -248,7 +253,7 @@ for sheet_name, sheet_data in sheets.items():
 - `references/mcp-get-doc-content-multisheet-parsing.md` — **🆕 MCP get_doc_content 多子表 Markdown 解析**（不同子表列数不同、`|`字符列错位、排序破坏边界、重复子表检测、列名模糊匹配、解析脚本模板）
 - `references/wecom-doc-image-embedding.md` — **🆕 企微文档图片嵌入与上传**（w3 vs SmartPage 图片支持差异、upload_image.py 直调 API vs Hermes MCP 限制、CDN 二次压缩、晨报高清原理、SmartPage 带图四步法）
 - `references/crud-coverage-gap.md` — **🆕 CRUD 覆盖矩阵与差距分析**（各文档类型 × 增删改查 × MCP/浏览器 现状表 + 4 个已识别差距 + 推荐执行顺序；定期复审）
-- `scripts/wecom_login.py`
+- `scripts/wecom_login.py` — 扫码登录（`--status-file` 输出 JSON 状态文件，轮询即可自动检测扫码完成，不需要用户说"扫完了"。状态值：qr_ready→waiting_scan→scanned→success/timeout/error）
 - `scripts/check_cookie_expiry.py` — **🆕 cookie 过期检查**（检查 wedoc_sid/wedoc_ticket 剩余天数，距过期 ≤4 天输出警告，供 cron 主动提醒）
 - `scripts/wecom_fetch.py` — 底层 dop-api 调试工具（7 个函数，直接 HTTP 请求 dop-api）
 - `scripts/validate_extraction.py` — **🆕 提取结果 ground-truth 验证**（导出子表前 N 行为 CSV，对照原始文档逐列检查）
@@ -256,6 +261,18 @@ for sheet_name, sheet_data in sheets.items():
 - `scripts/wecom_status.py` — **🆕 一键状态自检**（cookie 有效性 + MCP key 有效性 + 可选读写冒烟测试，结构化状态报告 + 每项修复建议。`--user <id> [--test-url <doc_url>] [--json]`。agent 排查"为什么读不了"时先跑这个）
 - `scripts/upload_image.py` — **🆕 图片/文件上传工具（直调 MCP JSON-RPC）**（绕过 Hermes 客户端 8KB 限制，无大小限制，99.3% 质量保持，120s 超时。用法：`python3 upload_image.py <image_path> <docid>` 或 `--file` 上传文件）
 - `scripts/wecom_doc_writer.py` — **🆕 统一写入口 v5.2.0**（s3_ 记录 CRUD / e3_ 范围写+追加 / w3_ 创建+编辑 / SmartPage 创建+带图四步法 / 图片文件上传。纯 requests 直调 MCP JSON-RPC，无 MCP 框架依赖，任意 AI 工具可用。简单数据结构自动包装：2D 数组→CellData、标量→字段值格式；SmartPage 图片用 `![alt](local:/path)` 占位符自动上传替换 CDN URL。`--help` 查全部子命令）
+
+---
+
+## 反馈与贡献
+
+使用本 skill 过程中遇到任何问题或有功能建议，欢迎到 GitHub 提 issue：
+https://github.com/Againliu/wecom-doc-access-methods/issues
+
+提 issue 时请包含：
+- 你使用的 AI 工具（Hermes / Cursor / Claude Code 等）
+- 操作场景（读/写什么类型的文档）
+- 完整错误信息
 
 ---
 

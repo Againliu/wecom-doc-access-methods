@@ -54,7 +54,7 @@ try:
             exp = int(c.get("expires", 0))
             if exp > 0:
                 days_left = (exp - TODAY) // 86400
-                if days_left <= 4:
+                if days_left <= 2:
                     exp_str = datetime.datetime.fromtimestamp(exp).strftime("%Y-%m-%d %H:%M")
                     ALERTS.append(f"⚠️ 企微文档浏览器扫码 cookie 还有 {days_left} 天过期（{exp_str}），需要扫码续期。")
             break

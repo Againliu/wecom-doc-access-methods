@@ -4,6 +4,17 @@
 
 ## 更新日志
 
+- **2026-08-10** (v5.4.0): 🚀 **Pro 文档全元素提取 + 扫码自动闭环**
+  - **Pro 文档解析增强**：`_parse_opendoc_text` 新增 Pro/JSON 格式（`isPro:true`）的完整元素提取。旧版只处理 `padHTML` 路径（Pro 文档 `padHTML` 为空），正文在 OT 结构 `clientVars.collab_client_vars.initialAttributedText` 的 6441 个 mutations 中。新增提取：
+    - 图片 CDN URL（`pr.drawing.graphicData.pic.blipFill.blip.embed`），24 张唯一 URL
+    - 表格结构标记（`pr.table.tblPr.isBegin`），35 个表格
+    - 批注元数据（`pr.commentContent.author` + `id`），11 条
+    - 正文文本 8,840 字（从 `mutation.s` 解码）
+  - **运行时副本同步**：发现 `scripts/wecom_doc_reader/reader.py` 与 skill 目录副本不同步（skill 有 Pro 解析修复但运行时副本没有），导致 E2E 失败。已同步。
+  - **扫码自动闭环**：`wecom_auth_flow.py` 新增 `--wait-done` 模式，Agent 自动管理扫码全流程。流程：`--check` → `auth_required` → `--wait-done` → 返回 `scan` payload（含 `reply_media` + `poll_command`）→ Agent 发二维码 → 轮询 `--status` 直到完成。**用户不需要说"扫完了"**。
+  - **同步副本**：`wecom_auth_flow.py` 同步到 identity-guard 副本（`plugins/identity-guard/`）。
+  - **实测文档**：`https://doc.weixin.qq.com/doc/w3_ASsA5wYLACcCNdggF4ZqWTw2G9Yfw`（X系列交付流程说明，Pro 版微文档），E2E 验证成功：11,831 字（正文 8,840 + 图片 24 + 批注 11 + 表格 35）。
+
 - **2026-07-17** (v5.1.0): SmartPage 删除 block 验证（浏览器键盘：清空文字+Backspace，跨session持久化）+ 拦截完整删除请求体格式（3步mutation：清空changeset→enabled:false→operation:5移除children）+ API直接删除格式文档化（ret=0但未持久化，原因：Z:0>0$空操作changeset，需用Z:len-len$先清空实际内容；create_timestamp/pad_version在command内部不在顶层；user_infos的name/img_url/corp_id必填）+ 新增references/smartpage-delete-block.md
   - **w3_ opendoc API 实现**：`reader.py` 新增 `_read_opendoc()` + `_parse_opendoc_response()` + `_decode_wecom_text()` 方法。w3_ 路由从 `_read_dom` 改为 `_read_opendoc`。修复了 canvas 渲染导致 DOM 只能拿到工具栏文字（135/455 字符）的问题
   - **m4_ 思维导图键盘编辑已验证**：Tab 添加子节点 + 键盘输入修改文本 + 自动保存到服务器（跨 session 验证）。engine 内部 API（171 方法）通过 React fiber 树提取，方法签名已解析（addNode/updateTopic/dfsAllNode/sendCommand）

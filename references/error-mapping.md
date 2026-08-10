@@ -23,6 +23,7 @@
 | `Timeout 300000ms exceeded` (wecom_login) | 二维码等待超时 | 增大 `--timeout`。二维码有效期约 2 分钟，超时需重新生成 |
 | `waiting for locator("canvas")` | 文档页面还没加载完 | 增加 `page.wait_for_timeout()` 等待时间，或用 `wait_for_selector("canvas")` |
 | `playwright._impl._errors.Error: Page.goto: net::ERR_*` | 网络不通 | 检查网络连接。企微文档域名 `doc.weixin.qq.com` 需要能访问 |
+| 扫码成功但 cookie 未保存 / 一直等到 timeout | **v5.3.2 前的 bug**：扫码判断只看 URL 是否含 `login`/`scenario`，企微跳转后 URL 仍带这些字样 → 误判未扫 → timeout 不保存 | 升级 wecom_login.py ≥v5.3.2：URL + `wedoc_sid` cookie 双重判断（OR 关系）；保存前轮询等 `wedoc_sid` 写入（≤15s）而非固定 sleep 5s；保存后验证 `wedoc_sid` 缺失则 warning。**通用教训：任何扫码登录检测都不要只看 URL 变化，要同时检查 session cookie 是否出现** |
 
 ## 3. Cookie / 状态管理错误
 
@@ -32,6 +33,7 @@
 | `json.JSONDecodeError` (cookie file) | Cookie 文件损坏 | 删除后重新登录 |
 | Cookie 有效但读不到数据 | 登录的账号没有文档权限 | 确认扫码的企微账号能访问目标文档 |
 | 多用户 cookie 混乱 | `--user` 参数指定了错误的 user_id | 每个用户独立的 `wecom_states/<user_id>.json` 文件。确认 `--user` 参数与扫码账号一致 |
+| **扫完码但 cookie 没保存** | v5.3.2 之前 `wecom_login.py` 只靠 URL 判断扫码成功：URL 仍含 `login`/`scenario`（如中间跳转页）→ 误判未扫码 → 等到 timeout 不保存 | 升级 v5.3.2+：双重判断（URL 变化 **或** `wedoc_sid` cookie 出现），保存前轮询等 `wedoc_sid` 写入，保存后缺 `wedoc_sid` 会输出 warning。异步集成用 `--status-file` 轮询状态文件，无需用户说"扫完了" |
 
 ## 4. SmartPage / 图片错误
 

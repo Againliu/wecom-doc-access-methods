@@ -440,6 +440,40 @@ python3 ~/.config/wecom-doc/scripts/lark_auth_flow.py --wait <wecom_userid>
 
 定时同步任务（如 `sync_wecom_smartsheet_browser.py`）用**创建人**的 per-user cookie，不是 `_shared.json`。每个定时任务记录创建人的 wecom_userid，运行时用对应的 per-user cookie。团队负责人创建的用团队负责人的，同事A创建的用同事A的。
 
+### 🚨 wecom_login.py 扫码成功但 cookie 未保存（2026-07-23 修复）
+
+**症状**：用户扫码完成，但脚本走到 timeout 分支退出，cookie 文件没写。
+
+**根因**：旧版判断扫码成功**只看 URL** —— `"login" not in url and "scenario" not in url`。企微扫码后跳转链路中若 URL 仍含 login/scenario 字样（中间跳转页），脚本一直判定"未扫码"→ 等到超时 → 不保存 cookie。
+
+**修复（v5.3.2，三处加固）**：
+1. **双重判定**：URL 变化 OR cookie 里出现 `wedoc_sid`（登录成功的真正标志），任一满足即判定扫码成功。`page.context.cookies("https://doc.weixin.qq.com")` 每 2s 查一次
+2. **保存前等 cookie 写入**：不固定 `sleep(5)`，改为轮询等 `wedoc_sid` 出现（最多 15s）再 `storage_state()` 落盘
+3. **保存后验证**：落盘的 cookies 里缺 `wedoc_sid` 时输出 `warning`（登录不完整），不假装 success
+
+**通用原则**：判断"用户完成了某个网页操作"时，URL 启发式是弱信号（目标站改 URL 结构就失效），**状态性证据**（关键 cookie 出现 / DOM 元素出现 / API 返回）才是强信号。能用强信号就不用 URL 判断。
+
+### 🚨 QR 登录异步集成：--status-file 模式（2026-07-23 团队负责人要求）
+
+**要求**："发出二维码之后，要持续检查扫码结果有没有返回，不需要用户告诉说扫码完成，就能自动处理后续。"
+
+`wecom_login.py` 支持 `--status-file <path>`：状态变化（`starting`/`qr_ready`/`waiting_scan`/`scanned`/`success`/`warning`/`timeout`/`error`）实时写 JSON 到该文件（stdout 也同步打印）。
+
+**调用方标准流程**：
+```bash
+# 1. 后台启动（不阻塞会话）
+python3 wecom_login.py --state <state.json> --qr <qr.png> \
+  --status-file /tmp/login_status.json --timeout 300 &
+# 2. 立刻把 QR 图发给用户（转 RGB + cp 到 MEDIA 白名单目录）
+# 3. 轮询 /tmp/login_status.json：
+#    - status=success → cookie 已保存，自动继续后续读写操作
+#    - status=timeout/error → 重新生成 QR
+#    - 其他 → 继续等
+# 全程不需要用户回报"扫完了"
+```
+
+与 `wecom_auth_flow.py --wait`（Hermes 封装版，background+notify_on_complete）是同一原则：**扫码结果由脚本侧自动检测，绝不依赖用户口头确认**。
+
 ### 🚨 MCP 操作也受身份隔离约束（2026-07-16 团队负责人纠正）
 
 MCP 虽然用应用级 token（不区分对话人），但操作的文档范围必须限定在当前对话人有权访问的范围内。不能借 MCP 读取对话人无权访问的其他文档。只操作对话人明确指定的文档。

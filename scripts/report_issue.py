@@ -16,7 +16,7 @@ GitHub Issue 自动反馈脚本
 环境变量：
     GITHUB_REPO   — GitHub 仓库 (owner/repo)，默认 Againliu/wecom-doc-access-methods
     GITHUB_TOKEN  — GitHub API token（必须设置）
-    ISSUE_AUTO    — 是否自动提交，默认 "1"（提交），设为 "0" 只打印不提交
+    ISSUE_AUTO    — 是否自动提交，默认 "0"（不提交）；仅显式设为 "1" 时提交
 """
 
 import os
@@ -143,15 +143,40 @@ def auto_report_issue(title, error_detail="", context=None, labels=None):
     """
     repo = _get_env("GITHUB_REPO", "Againliu/wecom-doc-access-methods")
     token = _get_env("GITHUB_TOKEN", "")
-    auto = _get_env("ISSUE_AUTO", "1")
+    auto = _get_env("ISSUE_AUTO", "0")
 
     if auto != "1":
         print(f"[report_issue] ISSUE_AUTO=0, skip: {title}", file=sys.stderr)
         return ""
 
     if not token:
-        print("[report_issue] GITHUB_TOKEN not set, skip", file=sys.stderr)
-        return ""
+        # 无 token 时，生成 GitHub issue 预填充链接，让外部用户一键提交
+        import urllib.parse
+        issue_title = urllib.parse.quote(f"[用户反馈] {title}")
+        issue_body = urllib.parse.quote(f"""## 问题描述
+
+{title}
+
+## 错误详情
+
+```
+{error_detail[:2000]}
+```
+
+## 使用环境
+
+- AI 工具：（请填写，如 Hermes / Cursor / Claude Code 等）
+- 操作场景：（请简述在做什么操作时出现此问题）
+
+---
+_此反馈由 wecom-doc-access-methods skill 自动生成。_""")
+        click_url = f"https://github.com/Againliu/wecom-doc-access-methods/issues/new?title={issue_title}&body={issue_body}&labels=bug,user-reported"
+        print(f"[report_issue] GITHUB_TOKEN not set, cannot auto-submit.", file=sys.stderr)
+        print(f"[report_issue] 请点击以下链接提交反馈（无需注册，GitHub 支持匿名浏览）：", file=sys.stderr)
+        print(f"[report_issue] {click_url}", file=sys.stderr)
+        # 同时输出到 stdout 让 Agent 能看到并转发给用户
+        print(f"FEEDBACK_URL:{click_url}")
+        return click_url
 
     if labels is None:
         labels = ["bug", "auto-reported"]

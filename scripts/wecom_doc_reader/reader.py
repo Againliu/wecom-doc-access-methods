@@ -13,7 +13,7 @@ import zlib
 import base64
 import fcntl
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 from datetime import datetime, timezone, timedelta
 
 from .constants import (
@@ -58,6 +58,244 @@ def _is_retryable_error(error_msg: str) -> bool:
         if kw in error_msg:
             return False
     return True
+
+
+def _decode_wecom_text(value: str) -> str:
+    """Decode the text encoding used by legacy WeCom opendoc responses."""
+    decoded = re.sub(
+        r"%u([0-9a-fA-F]{4})",
+        lambda match: chr(int(match.group(1), 16)),
+        value,
+    )
+    decoded = unquote(decoded)
+    decoded = decoded.replace("\r", "\n")
+    decoded = re.sub(r"[\x00-\x07\x0b\x0e-\x1f]", "", decoded)
+    decoded = re.sub(
+        r"[\x13\x08]?\s*HYPERLINK\s+\S+\s+[\x14]?(.*?)[\x15]",
+        r"\1",
+        decoded,
+    )
+    decoded = re.sub(
+        r"""HYPERLINK\s+(?:\\[a-z]\s+)?["']([^"']+)["']\s*""",
+        "",
+        decoded,
+    )
+    decoded = re.sub(r"HYPERLINK\s+https?://\S+\s*", "", decoded)
+    decoded = re.sub(r"HYPERLINK\s+", "", decoded)
+    decoded = re.sub(r"docLink\s+\\[a-z]+\s+\S+\s*", " ", decoded)
+    decoded = re.sub(r"\\[a-z]+\s+\S+\s*", " ", decoded)
+    decoded = re.sub(r"[\x08\x13\x14\x15]", "", decoded)
+    decoded = re.sub(r" +", " ", decoded)
+    decoded = re.sub(r"\n{3,}", "\n\n", decoded)
+    return decoded.strip()
+
+
+def _extract_image_urls(pr: dict) -> list[str]:
+    """Recursively extract CDN image URLs from a drawing mutation's pr."""
+    urls: list[str] = []
+    if not isinstance(pr, dict):
+        return urls
+
+    def _walk(obj: object) -> None:
+        if isinstance(obj, str):
+            if "wdcdn.qpic.cn" in obj or (
+                "qpic.cn" in obj and "/image" in obj.lower()
+            ):
+                urls.append(obj)
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                _walk(v)
+
+    _walk(pr.get("drawing", pr))
+    return urls
+
+
+def _extract_comment_text(pr: dict) -> str:
+    """Extract comment text from a commentContent mutation's pr."""
+    if not isinstance(pr, dict):
+        return ""
+    parts: list[str] = []
+
+    def _walk(obj: object) -> None:
+        if isinstance(obj, str) and obj.strip():
+            parts.append(obj.strip())
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                _walk(v)
+
+    _walk(pr.get("commentContent", pr))
+    return " ".join(parts).strip()
+
+
+def _extract_comment_meta(pr: dict) -> str | None:
+    """Extract author + id from a commentContent mutation's pr."""
+    cc = pr.get("commentContent", {})
+    if not isinstance(cc, dict):
+        return None
+    author = cc.get("author", "")
+    cid = cc.get("id", "")
+    if author and cid:
+        return f"[{author}] {cid}"
+    return None
+
+
+def _parse_opendoc_text(raw: str) -> str:
+    """Extract body text + structured elements from the opendoc wire format.
+
+    Handles two formats:
+    1. Legacy: line-delimited JSON with DocKeyframe commands (padHTML path)
+    2. Modern/Pro: single JSON with clientVars.collab_client_vars.initialAttributedText
+       (OT mutation path). Also extracts image URLs, table structure markers,
+       and comment metadata from mutation pr properties.
+    """
+    if not raw:
+        return ""
+
+    # ── Legacy format ──────────────────────────────────────────
+    candidates = []
+    parts = raw.split("\n")
+    for index, part in enumerate(parts[:-1]):
+        marker = part.strip()
+        if marker.isdigit() and int(marker) > 100:
+            data = parts[index + 1]
+            if len(data) > 100:
+                candidates.append((int(marker), data))
+
+    text_segments = []
+    for _size, data_string in sorted(candidates, reverse=True):
+        try:
+            data, _end = json.JSONDecoder().raw_decode(unquote(data_string).lstrip())
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        for command in data.get("commands", []):
+            if command.get("type") != "DocKeyframe":
+                continue
+            for mutation in command.get("mutations", []):
+                encoded = mutation.get("s", "")
+                if encoded:
+                    text_segments.append(_decode_wecom_text(encoded))
+        if text_segments:
+            break
+    if text_segments:
+        return "\n".join(segment for segment in text_segments if segment).strip()
+
+    # ── Modern JSON format (Pro/isPro docs) ────────────────────
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    client_vars = payload.get("clientVars")
+    if not isinstance(client_vars, dict):
+        return ""
+    attributed = (
+        client_vars.get("collab_client_vars", {})
+        .get("initialAttributedText", {})
+    )
+
+    segments: list[str] = []
+    image_urls: list[str] = []
+    comments: list[str] = []
+    table_count = 0
+
+    for block in attributed.get("text", []):
+        if not isinstance(block, dict):
+            continue
+        for command in block.get("commands", []):
+            if not isinstance(command, dict):
+                continue
+            for mutation in command.get("mutations", []):
+                if not isinstance(mutation, dict):
+                    continue
+                # Body text
+                encoded = mutation.get("s")
+                if isinstance(encoded, str) and encoded:
+                    decoded = _decode_wecom_text(encoded)
+                    if decoded:
+                        segments.append(decoded)
+
+                # Structured elements from pr
+                pr = mutation.get("pr")
+                if not isinstance(pr, dict):
+                    continue
+
+                # Images
+                if "drawing" in pr:
+                    urls = _extract_image_urls(pr)
+                    for url in urls:
+                        if url not in image_urls:
+                            image_urls.append(url)
+
+                # Tables — only isBegin markers (no isEnd in OT format)
+                tbl = pr.get("table")
+                if isinstance(tbl, dict):
+                    tbl_pr = tbl.get("tblPr", {})
+                    if isinstance(tbl_pr, dict) and tbl_pr.get("isBegin"):
+                        table_count += 1
+                        segments.append(f"\n[表格{table_count}]")
+
+                # Comments — only capture begin marker with author
+                if "commentContent" in pr:
+                    meta = _extract_comment_meta(pr)
+                    if meta and meta not in comments:
+                        comments.append(meta)
+
+    # Build final output: text + structured elements appendix
+    body = "\n".join(segment for segment in segments if segment).strip()
+    appendix: list[str] = []
+    if image_urls:
+        appendix.append(f"\n\n--- 图片列表 ({len(image_urls)} 张) ---")
+        for i, url in enumerate(image_urls, 1):
+            appendix.append(f"[图片{i}] {url}")
+    if comments:
+        appendix.append(f"\n--- 批注 ({len(comments)} 条) ---")
+        for i, c in enumerate(comments, 1):
+            appendix.append(f"[批注{i}] {c}")
+
+    return body + ("\n".join(appendix) if appendix else "")
+
+
+def _classify_opendoc_error(raw: str) -> dict | None:
+    """Recognize modern JSON error envelopes without exposing account metadata."""
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    client = payload.get("clientVars")
+    if not isinstance(client, dict):
+        return None
+    code = client.get("oidbret")
+    try:
+        numeric_code = int(code)
+    except (TypeError, ValueError):
+        numeric_code = 0
+    if numeric_code == 0:
+        return None
+
+    if numeric_code == 640002:
+        message = "企微文档不可用：文档不存在、链接已失效，或当前账号无访问权限"
+    else:
+        message = f"企微文档不可用：服务返回错误码 {numeric_code}"
+    return {
+        "success": False,
+        "doc_type": "w3",
+        "path_type": "doc",
+        "method": "opendoc",
+        "error_code": numeric_code,
+        "error": message,
+    }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 主类
@@ -254,9 +492,8 @@ class WeComDocReader:
                 state = json.load(f)
             cookies = {c["name"]: c["value"] for c in state.get("cookies", [])}
 
-            _check_url = os.environ.get("WECOM_COOKIE_CHECK_URL", "https://doc.weixin.qq.com/home/recent")
             resp = httpx.get(
-                _check_url,
+                "https://doc.weixin.qq.com/home/recent",
                 cookies=cookies,
                 follow_redirects=False,
                 timeout=10,
@@ -297,7 +534,6 @@ class WeComDocReader:
           - s3_ 智能表格 → _read_smartsheet (dop-api 全量结构化)
           - e3_ 电子表格 → _read_spreadsheet (原生 JS API + 剪贴板 HTML 兜底)
           - m4_ 思维导图 → _read_mind (dop-api/get/mind JSON 节点树)
-          - w3_ 微文档 → _read_opendoc (dop-api/opendoc 完整正文提取)
           - 其他类型     → _read_dom (DOM 文本提取)
 
         自动重试：偶发失败（JSON 解析、网络超时、页面未完全加载）自动重试
@@ -331,10 +567,10 @@ class WeComDocReader:
                 last_result = await self._read_spreadsheet(
                     user_id, url, sheet_id or info["tab"]
                 )
+            elif info["doc_type"] == "w3":
+                last_result = await self._read_doc_opendoc(user_id, url, info)
             elif info["doc_type"] == "m4":
                 last_result = await self._read_mind(user_id, url, info)
-            elif info["doc_type"] == "w3":
-                last_result = await self._read_opendoc(user_id, url, info)
             else:
                 last_result = await self._read_dom(user_id, url, info)
 
@@ -363,7 +599,122 @@ class WeComDocReader:
             last_result["retry_count"] = RETRY_MAX_ATTEMPTS
         return last_result
 
-    # ── 3a. DOM 文本提取（通用） ─────────────────────────
+    # ── 3a. 微文档 opendoc API 提取 ──────────────────────
+
+    async def _read_doc_opendoc(
+        self,
+        user_id: str,
+        url: str,
+        info: dict,
+    ) -> dict:
+        """Read a canvas-rendered w3_ document through dop-api/opendoc."""
+        from playwright.async_api import async_playwright
+
+        doc_id = info.get("doc_id")
+        if not doc_id:
+            return {"success": False, "error": "无法解析企微文档 URL"}
+
+        state_file = str(self._state_file(user_id))
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                ],
+            )
+            context = await browser.new_context(
+                storage_state=state_file,
+                viewport={"width": 1920, "height": 1080},
+            )
+            page = await context.new_page()
+            await _block_fonts(page)
+            try:
+                await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                )
+            except Exception:
+                pass
+            await page.wait_for_timeout(1500)
+
+            if _is_login_page(page.url):
+                await browser.close()
+                return {
+                    "success": False,
+                    "error": "cookies 已过期，需重新登录",
+                    "user_id": user_id,
+                }
+
+            body_preview = await page.evaluate(
+                "() => document.body?.innerText?.substring(0, 300) || ''"
+            )
+            if "暂无权限" in body_preview or "申请权限" in body_preview:
+                await browser.close()
+                return {
+                    "success": False,
+                    "error": "当前用户无此文档的访问权限",
+                    "user_id": user_id,
+                }
+
+            title = await page.title()
+            raw = await page.evaluate(
+                """async (docId) => {
+                    try {
+                        const response = await fetch(
+                            "https://doc.weixin.qq.com/dop-api/opendoc"
+                            + "?padId=" + encodeURIComponent(docId)
+                            + "&normal=1&outformat=1",
+                            {credentials: "include"}
+                        );
+                        if (!response.ok) {
+                            return {error: "HTTP " + response.status};
+                        }
+                        return {ok: true, text: await response.text()};
+                    } catch (error) {
+                        return {error: error.message};
+                    }
+                }""",
+                doc_id,
+            )
+            await browser.close()
+
+        if not raw or raw.get("error"):
+            return {
+                "success": False,
+                "doc_type": "w3",
+                "method": "opendoc",
+                "error": f"opendoc 请求失败: {(raw or {}).get('error', 'empty response')}",
+            }
+
+        response_text = raw.get("text", "")
+        classified = _classify_opendoc_error(response_text)
+        if classified:
+            return classified
+
+        text = _parse_opendoc_text(response_text)
+        if text and len(text) > 50:
+            return {
+                "success": True,
+                "doc_type": "w3",
+                "path_type": "doc",
+                "title": title,
+                "url": url,
+                "method": "opendoc",
+                "text_length": len(text),
+                "text": text,
+            }
+        return {
+            "success": False,
+            "doc_type": "w3",
+            "path_type": "doc",
+            "method": "opendoc",
+            "error": "opendoc 响应无法解析，未使用不完整的 DOM 内容",
+        }
+
+    # ── 3b. DOM 文本提取（通用） ─────────────────────────
 
     async def _read_dom(self, user_id: str, url: str, info: dict) -> dict:
         """用 Playwright 打开页面，从 DOM 提取文本"""
@@ -1942,207 +2293,6 @@ class WeComDocReader:
         for child in attached:
             WeComDocReader._extract_mind_nodes(child, depth + 1, result)
         return result
-
-    # ── 3e. 微文档 opendoc API（w3_） ─────────────────────
-
-    async def _read_opendoc(self, user_id: str, url: str, info: dict) -> dict:
-        """通过 dop-api/opendoc API 获取 w3_ 微文档完整正文
-
-        w3_ 微文档使用 canvas 渲染，DOM 提取只能拿到工具栏文字。
-        必须通过 opendoc API 获取完整文档内容。
-        """
-        from playwright.async_api import async_playwright
-        import re
-        from urllib.parse import unquote
-
-        state_file = str(self._state_file(user_id))
-        doc_id = info.get("doc_id", "")
-
-        if not doc_id:
-            return {"success": False, "error": f"无法解析 doc_id: {url}"}
-
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-            )
-            ctx = await browser.new_context(
-                storage_state=state_file,
-                viewport={"width": 1280, "height": 800},
-            )
-            page = await ctx.new_page()
-            await _block_fonts(page)
-
-            try:
-                await page.goto(url, wait_until="networkidle", timeout=30000)
-            except Exception:
-                pass
-            await page.wait_for_timeout(3000)
-
-            if _is_login_page(page.url):
-                await browser.close()
-                return {
-                    "success": False,
-                    "error": "cookies 已过期，需重新登录",
-                    "user_id": user_id,
-                }
-
-            # 调用 dop-api/opendoc
-            api_url = (
-                f"https://doc.weixin.qq.com/dop-api/opendoc"
-                f"?padId={doc_id}&normal=1&outformat=1"
-            )
-
-            fetch_result = await page.evaluate(
-                """async (url) => {
-                    try {
-                        const r = await fetch(url, { credentials: 'include' });
-                        const text = await r.text();
-                        return { ok: true, text: text, length: text.length };
-                    } catch(e) {
-                        return { error: e.message };
-                    }
-                }""",
-                api_url,
-            )
-
-            await browser.close()
-
-            if not fetch_result.get("ok"):
-                return {
-                    "success": False,
-                    "error": f"opendoc API 调用失败: {fetch_result.get('error')}",
-                    "user_id": user_id,
-                    "doc_type": "doc",
-                    "url": url,
-                }
-
-            raw_text = fetch_result.get("text", "")
-            if not raw_text or len(raw_text) < 10:
-                return {
-                    "success": False,
-                    "error": "opendoc 返回空内容",
-                    "user_id": user_id,
-                    "doc_type": "doc",
-                    "url": url,
-                }
-
-            # 解析 opendoc 自定义文本格式
-            # 格式: 标记行 + 大小行 + 数据行（JSON 或 URL 编码文本）
-            text_content = self._parse_opendoc_response(raw_text)
-
-            if not text_content:
-                return {
-                    "success": False,
-                    "error": "opendoc 解析后无正文内容",
-                    "raw_length": len(raw_text),
-                    "user_id": user_id,
-                    "doc_type": "doc",
-                    "url": url,
-                }
-
-            return {
-                "success": True,
-                "doc_type": "doc",
-                "text": text_content,
-                "char_count": len(text_content),
-                "url": url,
-                "title": info.get("title", ""),
-                "method": "opendoc-api",
-                "user_id": user_id,
-            }
-
-    @staticmethod
-    def _parse_opendoc_response(raw: str) -> str:
-        """解析 opendoc API 返回的自定义文本格式
-
-        格式由多段组成，每段:
-        - 标记行 (head/json/text)
-        - 子类型行
-        - 大小行 (数字)
-        - 数据行 (JSON 字符串或 URL 编码文本)
-
-        返回解码后的纯文本正文。
-        """
-        import re
-        from urllib.parse import unquote
-
-        lines = raw.split("\n")
-        extracted_texts = []
-        i = 0
-
-        while i < len(lines):
-            line = lines[i].strip()
-
-            # 检查是否是大小行（纯数字）
-            if line.isdigit():
-                size = int(line)
-                if i + 1 < len(lines) and size > 0:
-                    data_line = lines[i + 1]
-                    if len(data_line) >= size:
-                        data = data_line[:size]
-                    else:
-                        # 数据可能跨多行
-                        data = "\n".join(lines[i + 1 : i + 1 + max(1, size // 80)])
-                        data = data[:size]
-
-                    # 尝试解析 JSON
-                    try:
-                        parsed = json.loads(data)
-                        if isinstance(parsed, dict):
-                            # 提取 commands 中的文本
-                            commands = parsed.get("commands", [])
-                            if isinstance(commands, list):
-                                for cmd in commands:
-                                    if isinstance(cmd, dict):
-                                        text = cmd.get("text", "")
-                                        if text:
-                                            extracted_texts.append(
-                                                WeComDocReader._decode_wecom_text(text)
-                                            )
-                                    elif isinstance(cmd, str):
-                                        extracted_texts.append(
-                                            WeComDocReader._decode_wecom_text(cmd)
-                                        )
-                    except (json.JSONDecodeError, ValueError):
-                        # 不是 JSON，可能是 URL 编码的文本
-                        try:
-                            decoded = unquote(data)
-                            if decoded and len(decoded) > 10:
-                                cleaned = WeComDocReader._decode_wecom_text(decoded)
-                                if cleaned:
-                                    extracted_texts.append(cleaned)
-                        except Exception:
-                            pass
-
-                    i += 2
-                    continue
-
-            i += 1
-
-        # 合并所有提取的文本
-        full_text = "\n".join(extracted_texts)
-        return full_text.strip() if full_text else ""
-
-    @staticmethod
-    def _decode_wecom_text(s: str) -> str:
-        """解码企微文档的 %uXXXX 编码文本"""
-        import re
-        from urllib.parse import unquote
-
-        # %uXXXX → Unicode
-        s = re.sub(r"%u([0-9a-fA-F]{4})", lambda m: chr(int(m.group(1), 16)), s)
-        # 标准 URL 编码
-        s = unquote(s)
-        # \\r → 换行
-        s = s.replace("\\r", "\n")
-        # 清除控制字符
-        s = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", s)
-        # 清除 HYPERLINK 标记（保留链接文本）
-        s = re.sub(r"[\x13\x08]?\s*HYPERLINK\s+\S+\s+[\x14]?(.*?)[\x15]", r"\1", s)
-        s = re.sub(r'HYPERLINK\s+"[^"]*"\s*', "", s)
-        s = re.sub(r"HYPERLINK\s+\S+\s*", "", s)
-        return s.strip()
 
     # ── 4. 用户管理 ──────────────────────────────────────
 

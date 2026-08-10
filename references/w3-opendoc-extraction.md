@@ -70,12 +70,24 @@ def _decode_wecom_text(s: str) -> str:
     return s.strip()
 ```
 
+## Pro 版格式（isPro: true，2026-08-11 修复）
+
+新版 Pro 微文档返回**纯 JSON**（非自定义文本分段），`padHTML` 为空，正文在：
+`clientVars.collab_client_vars.initialAttributedText`（OT 结构，text[].commands[].mutations[]）
+
+- mutations 的 `s` 字段为编码文本（同样需 `_decode_wecom_text` 解码），拼接即全文
+- mutation `ty` 值：`mp`（文本主体）、`ir`（批注 commentRange，跳过）、`ms`/`is`（结构操作）
+- 图片/附件如存在，位于 mutations 或 attribs 中；当前提取器只取正文文本，不含图片 URL 和批注内容
+
+识别方式：`json.loads` 成功且含 `clientVars` → 走 OT 分支；否则走经典分段格式。
+
 ## Pitfalls
 
 - ❌ DOM 提取无效（canvas 渲染）
-- ❌ 不能直接 `JSON.parse` 整个响应（是自定义文本格式）
+- ❌ 不能直接 `JSON.parse` 整个响应（经典格式是自定义文本；Pro 格式可以直接 parse）
 - ⚠️ HYPERLINK 标记会残留，需要正则清理
 - ✅ 解码后文本通常 5000-15000 字符，包含完整正文
+- ⚠️ Pro 文档 `padHTML` 为空，只走 padHTML 路径会返回"无法解析"
 
 ## 验证方法
 
