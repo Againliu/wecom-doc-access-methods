@@ -10,6 +10,7 @@
     - 表格结构标记（`pr.table.tblPr.isBegin`），35 个表格
     - 批注元数据（`pr.commentContent.author` + `id`），11 条
     - 正文文本 8,840 字（从 `mutation.s` 解码）
+    - 文件附件（PDF/MP4），从 `mutation.s` 的 `\x13HYPERLINK <url> docLink <props> \x14<name>\x15` 结构提取，6 个（3 PDF + 3 MP4）
   - **运行时副本同步**：发现 `scripts/wecom_doc_reader/reader.py` 与 skill 目录副本不同步（skill 有 Pro 解析修复但运行时副本没有），导致 E2E 失败。已同步。
   - **扫码自动闭环**：`wecom_auth_flow.py` 新增 `--wait-done` 模式，Agent 自动管理扫码全流程。流程：`--check` → `auth_required` → `--wait-done` → 返回 `scan` payload（含 `reply_media` + `poll_command`）→ Agent 发二维码 → 轮询 `--status` 直到完成。**用户不需要说"扫完了"**。
   - **同步副本**：`wecom_auth_flow.py` 同步到 identity-guard 副本（`plugins/identity-guard/`）。

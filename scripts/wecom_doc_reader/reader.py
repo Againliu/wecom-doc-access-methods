@@ -90,6 +90,40 @@ def _decode_wecom_text(value: str) -> str:
     return decoded.strip()
 
 
+def _extract_attachments(s: str) -> list[dict]:
+    """Extract file attachments (PDF, MP4, etc.) from a raw mutation s value.
+
+    Attachments are encoded as field instructions with HYPERLINK:
+    Video: \\x13HYPERLINK <url> docLink <props> \\x14<display_name>\\x15
+    PDF:   <field_props> \\x14<display_name>.pdf\\x15\\r\\x13HYPERLINK <url> docLink <props>
+    """
+    attachments = []
+    # Both PDF and video attachments use the same structure:
+    # \x13HYPERLINK <url> docLink <props> \x14<name>\x15
+    # The URL is before \x14, the name is between \x14...\x15.
+    # No \x15 allowed between HYPERLINK and \x14 (same field block).
+    # Must be docLink (not normalLink) to skip internal page links.
+    pat = re.compile(
+        r"\x13HYPERLINK\s+(https?://\S+)\s+docLink\s+[^\x14\x15]*?\x14([^\x14\x15]+?)\x15",
+    )
+    for m in pat.finditer(s):
+        url, display = m.group(1), m.group(2)
+        display = re.sub(r"%u([0-9a-fA-F]{4})", lambda x: chr(int(x.group(1), 16)), display)
+        ext = display.rsplit(".", 1)[-1].lower() if "." in display else ""
+        attachments.append({"name": display, "url": url, "type": ext})
+    # Deduplicate by (name, url)
+    seen = set()
+    unique = []
+    for a in attachments:
+        key = (a["name"], a["url"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(a)
+    # Filter out non-attachment links (internal doc links without file extension)
+    unique = [a for a in unique if a["type"] in {"pdf", "mp4", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip", "rar"}]
+    return unique
+
+
 def _extract_image_urls(pr: dict) -> list[str]:
     """Recursively extract CDN image URLs from a drawing mutation's pr."""
     urls: list[str] = []
@@ -205,6 +239,7 @@ def _parse_opendoc_text(raw: str) -> str:
     segments: list[str] = []
     image_urls: list[str] = []
     comments: list[str] = []
+    attachments: list[dict] = []
     table_count = 0
 
     for block in attributed.get("text", []):
@@ -219,6 +254,12 @@ def _parse_opendoc_text(raw: str) -> str:
                 # Body text
                 encoded = mutation.get("s")
                 if isinstance(encoded, str) and encoded:
+                    # Extract attachments before _decode_wecom_text strips control chars
+                    ats = _extract_attachments(encoded)
+                    for a in ats:
+                        key = (a["name"], a["url"])
+                        if not any((x["name"], x["url"]) == key for x in attachments):
+                            attachments.append(a)
                     decoded = _decode_wecom_text(encoded)
                     if decoded:
                         segments.append(decoded)
@@ -256,6 +297,11 @@ def _parse_opendoc_text(raw: str) -> str:
         appendix.append(f"\n\n--- 图片列表 ({len(image_urls)} 张) ---")
         for i, url in enumerate(image_urls, 1):
             appendix.append(f"[图片{i}] {url}")
+    if attachments:
+        appendix.append(f"\n--- 附件 ({len(attachments)} 个) ---")
+        for i, a in enumerate(attachments, 1):
+            emoji = "📄" if a["type"] == "pdf" else "🎬" if a["type"] == "mp4" else "📎"
+            appendix.append(f"[附件{i}] {emoji} {a['name']} → {a['url']}")
     if comments:
         appendix.append(f"\n--- 批注 ({len(comments)} 条) ---")
         for i, c in enumerate(comments, 1):
