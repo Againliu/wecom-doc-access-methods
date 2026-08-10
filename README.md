@@ -355,7 +355,8 @@ See **`references/testing-plan.md`** — 18 test cases + 7 known-pitfall checks,
 
 | Version | Key Changes |
 |---------|-------------|
-| **v5.3.2** | **wecom_login fix**: dual scan detection (URL + wedoc_sid cookie), `--status-file` for async scan result polling, post-save wedoc_sid validation. |
+| **v5.5.0** | **Pro 文档全元素提取 + 扫码自动闭环**: OT mutation 全量解析（正文 8,840 字 + 图片 24 张 + 表格 35 个行列结构 + 批注 11 条 + 附件 6 个 PDF/MP4 + 内部链接 2 条）。`_decode_wecom_text` 保留表格结构标记（`\x1a`/`\x1b`/`\x07`/`\x06`）。`wecom_auth_flow.py --wait-done` 扫码自动轮询。 |
+| **v5.4.0** | **Pro 文档解析**: `isPro:true` 文档正文从 `clientVars.collab_client_vars.initialAttributedText` OT mutation 提取。图片/表格/批注从 `mutation.pr` 提取。运行时副本同步修复。 |
 | v5.3.1 | Error mapping reference (`references/error-mapping.md`), `wecom_status.py` status checker, permission model docs. |
 | v5.3.0 | **Browser write**: e3_ spreadsheet cell-level write via mutation API (applyMutation + await commitMutation → WS USER_CHANGES → server persistence verified). Quick Start + dependency table in README. |
 | v5.2.0 | **Write support**: `wecom_doc_writer.py` unified write entry (s3_ CRUD, e3_ range/append, w3_ create/edit, SmartPage create + image four-step, uploads). Security hardening, E2E test plan. |
@@ -370,7 +371,7 @@ See **`references/testing-plan.md`** — 18 test cases + 7 known-pitfall checks,
 
 ## Version
 
-v5.3.2 · Updated 2026-07-23
+v5.5.0 · Updated 2026-08-11
 
 ## License
 
@@ -458,4 +459,4 @@ python3 -m pytest scripts/test_wecom_doc_reader.py -v  # 离线单元测试
 
 ### 版本
 
-v5.3.2 · 2026-07-23 · MIT License
+v5.5.0 · 2026-08-11 · MIT License
