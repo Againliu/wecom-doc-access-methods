@@ -69,7 +69,15 @@ def _decode_wecom_text(value: str) -> str:
     )
     decoded = unquote(decoded)
     decoded = decoded.replace("\r", "\n")
-    decoded = re.sub(r"[\x00-\x07\x0b\x0e-\x1f]", "", decoded)
+    # \x08 = image placeholder marker, replace with newline before table markers
+    decoded = decoded.replace("\x08", "\n")
+    # Convert table structure markers to readable format before stripping
+    decoded = decoded.replace("\x1a", "\n| ")   # table begin
+    decoded = decoded.replace("\x1b", " |\n")    # table end
+    decoded = decoded.replace("\x07", " | ")     # cell separator
+    decoded = decoded.replace("\x06", " |\n| ")  # row separator
+    decoded = decoded.replace("\x05", "\n")      # section/note end
+    decoded = re.sub(r"[\x00-\x04\x0e-\x1f]", "", decoded)
     decoded = re.sub(
         r"[\x13\x08]?\s*HYPERLINK\s+\S+\s+[\x14]?(.*?)[\x15]",
         r"\1",
@@ -121,6 +129,27 @@ def _extract_attachments(s: str) -> list[dict]:
             unique.append(a)
     # Filter out non-attachment links (internal doc links without file extension)
     unique = [a for a in unique if a["type"] in {"pdf", "mp4", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip", "rar"}]
+    return unique
+
+
+def _extract_internal_links(s: str) -> list[dict]:
+    """Extract internal page links (normalLink) from mutation s value."""
+    links = []
+    pat = re.compile(
+        r"\x13HYPERLINK\s+(https?://\S+)\s+normalLink[^\x14\x15]*?\x14([^\x14\x15]+?)\x15",
+    )
+    for m in pat.finditer(s):
+        url, display = m.group(1), m.group(2)
+        display = re.sub(r"%u([0-9a-fA-F]{4})", lambda x: chr(int(x.group(1), 16)), display)
+        links.append({"name": display, "url": url})
+    # Deduplicate
+    seen = set()
+    unique = []
+    for l in links:
+        key = (l["name"], l["url"])
+        if key not in seen:
+            seen.add(key)
+            unique.append(l)
     return unique
 
 
@@ -240,6 +269,7 @@ def _parse_opendoc_text(raw: str) -> str:
     image_urls: list[str] = []
     comments: list[str] = []
     attachments: list[dict] = []
+    internal_links: list[dict] = []
     table_count = 0
 
     for block in attributed.get("text", []):
@@ -260,6 +290,12 @@ def _parse_opendoc_text(raw: str) -> str:
                         key = (a["name"], a["url"])
                         if not any((x["name"], x["url"]) == key for x in attachments):
                             attachments.append(a)
+                    # Extract internal links before _decode_wecom_text strips control chars
+                    ils = _extract_internal_links(encoded)
+                    for l in ils:
+                        key = (l["name"], l["url"])
+                        if not any((x["name"], x["url"]) == key for x in internal_links):
+                            internal_links.append(l)
                     decoded = _decode_wecom_text(encoded)
                     if decoded:
                         segments.append(decoded)
@@ -302,6 +338,10 @@ def _parse_opendoc_text(raw: str) -> str:
         for i, a in enumerate(attachments, 1):
             emoji = "📄" if a["type"] == "pdf" else "🎬" if a["type"] == "mp4" else "📎"
             appendix.append(f"[附件{i}] {emoji} {a['name']} → {a['url']}")
+    if internal_links:
+        appendix.append(f"\n--- 内部链接 ({len(internal_links)} 条) ---")
+        for i, l in enumerate(internal_links, 1):
+            appendix.append(f"[链接{i}] {l['name']} → {l['url']}")
     if comments:
         appendix.append(f"\n--- 批注 ({len(comments)} 条) ---")
         for i, c in enumerate(comments, 1):
