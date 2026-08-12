@@ -1,12 +1,12 @@
 ---
 name: wecom-doc-access-methods
-version: 5.5.0
+version: 5.6.0
 description: >
   读取：s3_ 智能表格(dop-api全量)、e3_ 电子表格(原生JS API)、w3_ 微文档(opendoc API完整正文)、m4_ 思维导图(dop-api/get/mind)。
   编辑：w3_ 微文档(MCP edit_doc_content全量覆写 + 浏览器键盘增删改)、e3_ 电子表格(MCP sheet_* + 浏览器 mutation API 写入)、s3_ 智能表格(MCP smartsheet_* 17种字段类型)。
   图片上传：直调MCP JSON-RPC(无8KB限制，99.3%质量保持)。
   浏览器UI创建：8种类型(智能文档/智能表格/文档/表格/幻灯片/收集表/思维导图/流程图)。
-  不可编辑：p3_幻灯片/f4_流程图(方法待探索,非不可行)。m4_思维导图键盘编辑已验证(Tab添加子节点+键盘输入修改文本+自动保存)。SmartPage编辑已验证(submit_command API + EtherPad changeset, 跨session持久化)。SmartPage删除已验证(浏览器键盘清空+Backspace)。
+  不可编辑：p3_幻灯片/f4_流程图(方法待探索,非不可行)。m4_思维导图键盘编辑已验证(Tab添加子节点+键盘输入修改文本+自动保存)。SmartPage HTTP API 写入已突破(submit_command + application/protojson, 创建/删除/移动/改标题全部可行, 不需要 WebSocket/浏览器)。SmartPage删除已验证(浏览器键盘清空+Backspace)。
 ---
 ---
 
@@ -246,7 +246,8 @@ for sheet_name, sheet_data in sheets.items():
 - `references/w3-opendoc-extraction.md` — **w3_ 微文档 opendoc API 提取**（canvas 渲染、自定义格式解析、%uXXXX 解码）
 - `references/m4-mind-extraction.md` — **m4_ 思维导图读取**（JSON 节点树递归提取）
 - `references/m4-engine-api-extraction.md` — **🆕 m4_ 思维导图 engine API 提取与编辑探索**（React fiber 提取路径、171 方法清单、engineConfig、textContainerEl caret 分析、fileData 结构、键盘编辑验证、p3_/f4_ 方向）
-- `references/smartpage-editing-exploration.md` — SmartPage 编辑深度探索（v2-v9 全记录：lastCanWrite 强制激活 / dataDispatcher 签名 / createEditor prototype / DI 上下文搜索 / 根因分析）
+| `references/smartpage-editing-exploration.md` | SmartPage 编辑深度探索（v2-v9 浏览器方案全记录，已被 HTTP API 方案取代） | 了解浏览器方案失败原因时 |
+| `references/smartpage-http-api-write.md` | **🆕 SmartPage HTTP API 写入协议**（submit_command + application/protojson，创建/删除/移动/改标题完整格式+错误码+示例代码） | SmartPage 写入操作时必读 |
 - `references/smartpage-delete-block.md` — **🆕 SmartPage 删除 block 完整记录**（浏览器键盘验证 + 拦截完整请求体格式 + API 直接删除调试笔记 + 变量获取路径表）
 - `references/wecom-messaging.md` — **WeCom 消息媒体发送指南**
 - `references/wecom-media-delivery-debug.md` — **企微图片交付排错指南**
