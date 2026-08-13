@@ -12,3 +12,47 @@ references/851003-diagnostic.md
 
 # cookie 状态目录（含敏感凭据）
 scripts/wecom_states/
+
+# ---- 白名单式发布规则(2026-08-12) ----
+# 默认忽略一切,只显式放行文本类型。
+#
+# 为什么不是黑名单:2026-08-11 有 90 个非 skill 文件被批量塞进本目录并经
+# GitLab 同步进了 public 仓库(114.8MB)。当时三道关卡全是黑名单 ——
+# .gitignore 列了 __pycache__/*.pyc、publish_skill.sh 列了 6 条、
+# 同步脚本的脱敏闸门是 grep -rlE 文本匹配(二进制它一个字都看不见)。
+#
+# 更要命的是其中一个文件叫 `authcode`,是张 808x1690 的 PNG 但**没有扩展名** ——
+# 任何按扩展名写的黑名单都挡不住它。所以这里改成白名单:
+# 没被显式放行的一律不进仓库,新增一种二进制格式也不会再静默漏出去。
+#
+# 需要配图请用 CDN URL。探索产物放 /tmp,不要放 skill 本体。
+*
+!*/
+!*.md
+!*.py
+!*.sh
+!*.json
+!*.yaml
+!*.yml
+!*.txt
+!*.toml
+!*.cfg
+!*.ini
+!*.ts
+!*.tsx
+!*.js
+!*.jsx
+!*.css
+!*.html
+!*.sql
+!.gitignore
+!LICENSE
+
+# 白名单之内仍要排除的(敏感/垃圾)
+__pycache__/
+*.pyc
+SKILL.md.bak-*
+.gitignore.bak-*
+references/identity-resolution-pitfalls.md
+references/851003-diagnostic.md
+scripts/wecom_states/
