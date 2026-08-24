@@ -4,6 +4,15 @@
 
 ## 更新日志
 
+- **2026-08-24 15:10** (v5.7.1): 🔧 **发布链路修复 + 全平台推送 v5.7.0 内容**
+  - **发布三坑(本次实测)**:
+    1. **脱敏扫描集 ≠ 发布集**: `publish_skill.sh` Step1 扫描含 `.bak-*/.orig-*` 垃圾文件(发布集排除它们),导致明明发布内容干净却被垃圾里的敏感词拦停。已修:扫描集与 EXCLUDES 对齐。同类坑:__pycache__ 的 .pyc 二进制也会被 grep 文本扫到。
+    2. **curl|grep -m1 + pipefail = exit 23**: 版本闭环检查里 `curl ... | grep -m1` 的 grep 拿到首个匹配即退出 → curl 收 SIGPIPE → exit 23 → `set -euo pipefail` 中止后续 Step。已修:先落变量再 grep。
+    3. **GitHub 远端领先时的 rebase 路线**: push 被拒(fetch first)时,先 `git fetch` + 看 `HEAD..origin/main` 与 `origin/main..HEAD` 双向差异,内容兼容(同为删二进制/改文本)则 rebase 后 push,不盲目 force。
+  - **skill 正文脱敏**: SKILL.md/6 个 references/py 脚本里 8-18 pathmap 引入的本地绝对路径全部改写为 `~` 家目录相对形式(root 用户等价,发布安全);`retrospective-2026-08.md` 人名泛化为角色称谓+路径改写后**走全平台发布**(不走排除清单,文件头说明同步更新);SKILL.md 的 Agent 实例名单泛化为「各 Agent 实例」。
+  - **顺手修 bug**: `check_cookie_expiry.py` 补 `os.path.expanduser()` — 原 `~/.config/...` 老路径从未生效(os.path.exists 不展开 ~),一直返回 missing。
+  - **六端版本闭环**: Hermes 本地/GitLab/GitHub/OpenClaw×2/GitLab clone 全部 5.7.0(注:GitLab 网页 raw 需登录,验证用本地 clone)。OpenClaw `skills/devops/` 副本 publish 脚本不覆盖,需手动 rsync(脚本 Step5 只同步 workspace/skills/)。
+
 - **2026-08-24** (v5.7.0): 📋 **三周工作复盘(2026-08-04~08-24)系统化**
   - 新增 `references/retrospective-2026-08.md`:从 27 个相关会话(state.db 直查)提取 21 条教训
     - 同步管线专项 L1-L14:机器人身份建文档/listAfter=PREPEND/表格形态要求4次才落实/删除假成功/多文档台账/MCP图片配额/sheet v2端点/markdown残留/标题type=12-17/Wiki API字段名/多用户隔离/全量重建代价/发布版本号盲区/字号缩放虚惊
