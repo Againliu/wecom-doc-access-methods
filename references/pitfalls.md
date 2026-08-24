@@ -44,9 +44,9 @@
 - ⚠️ **MCP errcode 区分**（2026-06-26 实测）：监控检测时区分三种 errcode——851014/2200063=授权过期（需告警）；851003=无此文档权限但授权有效（正常）；851000=无效URL但授权有效（正常）。检测脚本应用 smartsheet_get_sheet + 假URL，只有 851014/2200063 才告警
 - ✅ **主动续期提醒**（2026-06-26 用户要求，2026-07-15 增强）：cookie 到期前 4 天主动提醒用户扫码；MCP 授权过期无法预测，检测频率提到每 1 小时（用户要求），过期后尽快告警。用 `scripts/wecom_doc_auth_check.py` + Hermes cron（no_agent, 每小时跑 `17 * * * *`），有异常才输出（静默=正常）。用户原话："以后你过期前就提醒我，不要过期了再跟我说"
 - ⚠️ **🚨 三个 cookie 文件必须同步**（2026-06-27 踩坑 — 误告警根因）：生产环境有**三个** cookie 文件，扫码续期后必须**全部更新**，否则监控 cron 读到旧文件会发误告警：
-  - `~/.config/wecom-doc/states/_shared.json` — **主力**（`wecom_login.py` 扫码脚本写入此文件）
-  - `~/.config/wecom-doc/workspace/wecom_browser_state.json` — **备用**（同步脚本 `monitor_wecom_sync.py` 读此文件）
-  - `~/.config/wecom-doc/workspace/wecom_cookies.json` — **`wecom_auto_renew.py` 读此文件**（cron 续期检查用）
+  - `~/.hermes/scripts/wecom_states/_shared.json` — **主力**（`wecom_login.py` 扫码脚本写入此文件）
+  - `~/.hermes/workspace/wecom_browser_state.json` — **备用**（同步脚本 `monitor_wecom_sync.py` 读此文件）
+  - `~/.hermes/workspace/wecom_cookies.json` — **`wecom_auto_renew.py` 读此文件**（cron 续期检查用）
   - **踩坑场景**：6/26 晚扫码续期只更新了 `_shared.json` + `wecom_browser_state.json`，漏了 `wecom_cookies.json` → 6/27 早 09:00 cron 读旧文件报"剩余 1.6 天"误告警 → 用户困惑"昨晚刚搞过怎么又要搞"
   - **修复**：`wecom_auto_renew.py` 改为优先读 `_shared.json`（fallback 到 `wecom_cookies.json`），续期时同时写两个文件
   - **铁规**：任何 cookie 更新操作（扫码续期 / `wecom_login.py` / `wecom_auto_renew.py`）后，必须验证三个文件的 `wedoc_sid` expires 时间一致
@@ -71,10 +71,10 @@
 
 ### 🚨 QR 图片必须在 workspace 目录 + 转 RGB（2026-07-16 踩坑）
 - ❌ QR 图片保存到 `/tmp/` → 企微 `MEDIA:` 语法发不出去（不在白名单目录）
-- ✅ QR 图片保存到 `~/.config/wecom-doc/workspace/`（企微 MEDIA 白名单目录）
+- ✅ QR 图片保存到 `~/.hermes/workspace/`（企微 MEDIA 白名单目录）
 - ❌ 1-bit grayscale PNG 企微客户端无法渲染（显示裂图）
 - ✅ 必须转 RGB：`Image.open(qr).convert('RGB').resize((800,800), Image.NEAREST).save(qr_rgb)`
-- ✅ 发图片用 `MEDIA:~/.config/wecom-doc/workspace/qr_xxx.png`
+- ✅ 发图片用 `MEDIA:~/.hermes/workspace/qr_xxx.png`
 - ✅ 发链接直接发可点击的 URL（不要让用户复制粘贴）
 
 ### 🚨 "不要覆盖了再恢复"（2026-07-16 团队负责人纠正）
@@ -97,8 +97,8 @@
 - ⚠️ crontab 分钟避开整点（用 :07/:13/:17/:23/:37/:43），整点是 API 调用高峰
 
 ### Hermes cron `no_agent=true` script 参数（2026-06-27 踩坑 — cron 自创建以来一直 error）
-- ⚠️ `no_agent=true` 的 cron job，`script` 参数必须是**相对文件名**（如 `wecom_doc_auth_check.py`），不是 shell 命令（如 `python3 ~/.config/wecom-doc/scripts/wecom_doc_auth_check.py 2>&1`）
-- ❌ 写成 shell 命令时，cron 框架把整个字符串当文件路径找 → `Script not found: ~/.config/wecom-doc/scripts/python3 /root/...` → `last_status: "error"` 静默失败
+- ⚠️ `no_agent=true` 的 cron job，`script` 参数必须是**相对文件名**（如 `wecom_doc_auth_check.py`），不是 shell 命令（如 `python3 ~/.hermes/scripts/wecom_doc_auth_check.py 2>&1`）
+- ❌ 写成 shell 命令时，cron 框架把整个字符串当文件路径找 → `Script not found: ~/.hermes/scripts/python3 /root/...` → `last_status: "error"` 静默失败
 - ✅ 正确写法：`script: "wecom_doc_auth_check.py"`（相对于 `~/.hermes/scripts/`）
 - ⚠️ `.sh`/`.bash` 后缀走 bash 执行，其他后缀（`.py`）走 Python 执行
 - ⚠️ 这种错误**不会告警**——cron 正常 schedule 但每次执行都失败，只有手动查 `last_status` 或看 `~/.hermes/cron/output/<job_id>/` 下的日志才发现
@@ -337,23 +337,27 @@ w3_ → _read_opendoc (dop-api/opendoc)      ✅ 完整（v5.0 新增）
 **设计原则（团队负责人 2026-07-16 纠正）**：
 - **脚本做厚**：所有流程逻辑封装在代码里，LLM 不能绕过
 - **SOUL.md 做薄**：只写"操作前必须调 xxx 脚本"这一条，不写详细流程
-- **自动轮询**：用户扫码/授权后不需要再说"扫完了"——`--wait` 模式用 `background=true + notify_on_complete=true` 自动检测
+- **自动轮询**：用户扫码/授权后不需要再说“扫完了”——企微用 `--wait-done`（`--wait` 自 v5.5.0 起硬报错），飞书仍用 `--wait`（尚未提供 `--wait-done`）；配 `background=true + notify_on_complete=true` 自动检测
 
 **封装脚本**：
 
 ```bash
-# 企微：检查cookie → 需要扫码时生成二维码 → --wait自动等待扫码完成
-python3 ~/.config/wecom-doc/scripts/wecom_auth_flow.py --check <wecom_userid>
+# 企微：检查cookie → 需要扫码时生成二维码 → --wait-done 自动等待扫码完成
+python3 ~/.hermes/scripts/wecom_auth_flow.py --check <wecom_userid>
 # 返回: {"action":"ok"} 或 {"action":"scan","qr_path":"/tmp/wecom_qr_xxx_rgb.png"}
 # 如果 scan：发二维码给用户，然后后台等待：
-python3 ~/.config/wecom-doc/scripts/wecom_auth_flow.py --wait <wecom_userid>
+python3 ~/.hermes/scripts/wecom_auth_flow.py --wait-done <wecom_userid>
+# ⚠️ 不要用 --wait：v5.5.0 起硬报错(exit 64)。它只返回 QR 就退出,把轮询责任丢给 Agent,
+#    历史上每个 Agent 都因此漏轮询。--wait-done 返回 reply_media + poll_command,
+#    把 reply_media 发给用户后用 poll_command 轮询到 completed。
 # 用 terminal(background=true, notify_on_complete=true) → 扫码完成自动通知，不需用户再说"扫完了"
 
-# 飞书：检查token → 需要授权时返回URL → --wait自动轮询授权完成
-python3 ~/.config/wecom-doc/scripts/lark_auth_flow.py --check <wecom_userid>
+# 飞书：检查token → 需要授权时返回URL → --wait 自动轮询授权完成
+# (飞书尚未提供 --wait-done,--wait 在飞书这边仍然有效,不要照搬企微的写法)
+python3 ~/.hermes/scripts/lark_auth_flow.py --check <wecom_userid>
 # 返回: {"action":"ok"} 或 {"action":"auth","url":"https://..."}
 # 如果 auth：发URL给用户，然后后台等待：
-python3 ~/.config/wecom-doc/scripts/lark_auth_flow.py --wait <wecom_userid>
+python3 ~/.hermes/scripts/lark_auth_flow.py --wait <wecom_userid>
 # 用 terminal(background=true, notify_on_complete=true) → 授权完成自动通知，不需用户再说"授权了"
 ```
 
@@ -412,12 +416,12 @@ python3 ~/.config/wecom-doc/scripts/lark_auth_flow.py --wait <wecom_userid>
 ### 🚨 发图片/链接要直接能用，不要让用户复制（2026-07-16 团队负责人要求）
 
 **铁规**：
-- 发二维码/图片 → 用 `MEDIA:` 语法发到企微白名单目录的文件（`~/.config/wecom-doc/workspace/`），用户直接看到图片
+- 发二维码/图片 → 用 `MEDIA:` 语法发到企微白名单目录的文件（`~/.hermes/workspace/`），用户直接看到图片
 - 发授权链接 → 直接发 markdown 链接 `[点击授权](url)` 或纯 URL，用户直接点击
 - ❌ 不要让用户复制链接到浏览器打开
 - ❌ 不要把图片放在 `/tmp/`（不在 MEDIA 白名单目录，发不出去）
 
-**已修复**：`wecom_auth_flow.py` 的 QR 路径从 `/tmp/` 改到 `~/.config/wecom-doc/workspace/`，QR 转 RGB 后直接在白名单目录，LLM 用 `MEDIA:` 直接发。
+**已修复**：`wecom_auth_flow.py` 的 QR 路径从 `/tmp/` 改到 `~/.hermes/workspace/`，QR 转 RGB 后直接在白名单目录，LLM 用 `MEDIA:` 直接发。
 
 ### 🚨 系统性设计原则：不要打补丁式修复（2026-07-16 团队负责人纠正）
 
@@ -433,9 +437,9 @@ python3 ~/.config/wecom-doc/scripts/lark_auth_flow.py --wait <wecom_userid>
 
 ### 🚨 QR 码保存路径必须在企微 MEDIA 白名单目录（2026-07-16 实测）
 
-`wecom_auth_flow.py` 的 QR 码保存路径从 `/tmp/` 改到 `~/.config/wecom-doc/workspace/`。原因：
+`wecom_auth_flow.py` 的 QR 码保存路径从 `/tmp/` 改到 `~/.hermes/workspace/`。原因：
 - `MEDIA:/tmp/xxx.png` 会被 gateway 的 `media_delivery_allow_dirs` 白名单**静默拦截**
-- `~/.config/wecom-doc/workspace/` 在白名单内，`MEDIA:` 能直接发图片
+- `~/.hermes/workspace/` 在白名单内，`MEDIA:` 能直接发图片
 - QR 还需转 RGB（1-bit PNG 企微无法渲染）
 
 定时同步任务（如 `sync_wecom_smartsheet_browser.py`）用**创建人**的 per-user cookie，不是 `_shared.json`。每个定时任务记录创建人的 wecom_userid，运行时用对应的 per-user cookie。团队负责人创建的用团队负责人的，同事A创建的用同事A的。
@@ -568,7 +572,7 @@ if missing_ids:
 
 2. 生成QR码（在远程服务器执行,脚本会阻塞等待扫码,需用 nohup 后台运行）:
 ```bash
-ssh -p <ssh_port> root@<server_ip> 'cd ./scripts && nohup python3 wecom_login.py --state ~/.config/wecom-doc/states/<safe_userid>.json --qr /tmp/wecom_qr.png --timeout 300 > /tmp/wecom_login.log 2>&1 & echo "PID=$!"'
+ssh -p <ssh_port> root@<server_ip> 'cd ./scripts && nohup python3 wecom_login.py --state ~/.hermes/scripts/wecom_states/<safe_userid>.json --qr /tmp/wecom_qr.png --timeout 300 > /tmp/wecom_login.log 2>&1 & echo "PID=$!"'
 ```
 ⚠️ `safe_userid = re.sub(r"[^\w\-.]", "_", wecom_userid)` — 与续期流程用 `_shared.json` 不同,首次授权用 per-user 路径从零创建
 
@@ -580,10 +584,10 @@ ssh -p <ssh_port> root@<server_ip> 'ls -la /tmp/wecom_qr.png 2>/dev/null && echo
 4. 拉取QR到本地 + 转RGB + 复制到白名单目录:
 ```bash
 scp -P <ssh_port> root@<server_ip>:/tmp/wecom_qr.png /tmp/wecom_qr.png
-python3 -c "from PIL import Image; img=Image.open('/tmp/wecom_qr.png'); img.convert('RGB').resize((800,800),Image.NEAREST).save('~/.config/wecom-doc/workspace/wecom_qr_send.png')"
+python3 -c "from PIL import Image; img=Image.open('/tmp/wecom_qr.png'); img.convert('RGB').resize((800,800),Image.NEAREST).save('~/.hermes/workspace/wecom_qr_send.png')"
 ```
 
-5. 发送QR给用户: `MEDIA:~/.config/wecom-doc/workspace/wecom_qr_send.png`
+5. 发送QR给用户: `MEDIA:~/.hermes/workspace/wecom_qr_send.png`
 
 6. 用户扫码后,脚本自动保存 cookie 到 `<safe_userid>.json`,后续读取直接用这个 cookie
 
@@ -595,16 +599,16 @@ python3 -c "from PIL import Image; img=Image.open('/tmp/wecom_qr.png'); img.conv
 **当前状态**：飞书映射表 6 人（用户/同事A/同事C/同事D/同事E + 1人），企微 cookie 团队负责人_shared.json + per-user 文件。lark-as-user.sh 已验证可用。
 
 **🚨 脚本执行位置（2026-07-16 实测）**：
-- **企微文档脚本**（`wecom_doc_check_auth.sh` / `wecom_login.py` / `wecom_doc_reader`）→ 在**远程服务器** `ssh -p <ssh_port> root@<server_ip>` 上运行。cookie 文件存储在远程 `~/.config/wecom-doc/states/`。
-- **飞书 lark-cli 脚本**（`lark_check_auth.sh` / `lark-as-user.sh` / `lark-user-onboard.py`）→ 在**本地** Hermes 服务器上运行。lark-cli 二进制在本地 `/root/.nvm/versions/node/v22.22.1/bin/lark-cli`，远程没有 lark-cli。映射表在本地 `~/.config/wecom-doc/workspace/wecom-feishu-mapping.json`。
+- **企微文档脚本**（`wecom_doc_check_auth.sh` / `wecom_login.py` / `wecom_doc_reader`）→ 在**远程服务器** `ssh -p <ssh_port> root@<server_ip>` 上运行。cookie 文件存储在远程 `~/.hermes/scripts/wecom_states/`。
+- **飞书 lark-cli 脚本**（`lark_check_auth.sh` / `lark-as-user.sh` / `lark-user-onboard.py`）→ 在**本地** Hermes 服务器上运行。lark-cli 二进制在本地 `/root/.nvm/versions/node/v22.22.1/bin/lark-cli`，远程没有 lark-cli。映射表在本地 `~/.hermes/workspace/wecom-feishu-mapping.json`。
 - ⚠️ 不要 SSH 到远程跑 lark-cli 命令（会报 `command not found`）。
-- ⚠️ QR 码图片在远程生成后，需 `scp -P <ssh_port>` 拉到本地 → 转 RGB → 复制到 `~/.config/wecom-doc/workspace/` → 通过 `MEDIA:` 发送。
+- ⚠️ QR 码图片在远程生成后，需 `scp -P <ssh_port>` 拉到本地 → 转 RGB → 复制到 `~/.hermes/workspace/` → 通过 `MEDIA:` 发送。
 
 **飞书 OAuth 新用户授权流程（2026-07-16 验证）**：
-1. 检查映射：`~/.config/wecom-doc/scripts/lark_check_auth.sh <wecom_userid>` → action=auth 表示未映射
-2. 发起授权：`python3 ~/.config/wecom-doc/scripts/lark-user-onboard.py --init <wecom_userid>` → 返回 `DEVICE_CODE:` 和 `VERIFY_URL:`
+1. 检查映射：`~/.hermes/scripts/lark_check_auth.sh <wecom_userid>` → action=auth 表示未映射
+2. 发起授权：`python3 ~/.hermes/scripts/lark-user-onboard.py --init <wecom_userid>` → 返回 `DEVICE_CODE:` 和 `VERIFY_URL:`
 3. 把 `VERIFY_URL` 发给用户，用户在浏览器登录飞书完成授权
-4. 完成授权：`python3 ~/.config/wecom-doc/scripts/lark-user-onboard.py --complete <device_code>` → 自动保存映射 + token
+4. 完成授权：`python3 ~/.hermes/scripts/lark-user-onboard.py --complete <device_code>` → 自动保存映射 + token
 5. 验证：`lark_check_auth.sh <wecom_userid>` → action=ok
 6. 用 `lark-as-user.sh <wecom_userid> lark-cli wiki spaces get_node --token <token> --format json` 读取文档
 - ⚠️ `lark-user-onboard.py` 请求的 scopes 是 `search:docs:read drive:drive:readonly docx:document:readonly`（可能需要加 `wiki:wiki:readonly` 用于 wiki 读取）
@@ -1029,7 +1033,7 @@ Z:<old_len_base36>><change_base36><operations>$<text>
 
 ### SOUL.md 是系统提示词源头（2026-07-16 发现）
 
-**关键发现**：`~/.config/wecom-doc/SOUL.md` 是 Hermes 系统提示词的源头文件。新 session 创建时直接加载这个文件。在 SOUL.md 里加规则比改 memory 更强制——因为 SOUL.md 内容直接构建 system prompt，不是通过 memory 注入的。
+**关键发现**：`~/.hermes/SOUL.md` 是 Hermes 系统提示词的源头文件。新 session 创建时直接加载这个文件。(2026-08-18 更正:原写 `~/.config/wecom-doc/SOUL.md`,该路径不存在。)
 
 **使用方式**：用 `patch` 工具在 SOUL.md 的"🔒 铁规"章节里加新规则（如飞书/企微操作前的强制检查步骤）。
 
@@ -1038,7 +1042,7 @@ Z:<old_len_base36>><change_base36><operations>$<text>
 ### 不改框架，用现有机制解决（2026-07-16 团队负责人要求）
 - ❌ 不要改 Hermes 框架代码来解决身份隔离等问题——系统要跟官方版本升级
 - ✅ 用现有机制解决：skill 规则 + 独立脚本（lark-as-user.sh / wecom_doc_check_auth.sh）+ memory 约束
-- ✅ 身份检查脚本放 `~/.config/wecom-doc/scripts/`（全局可用，不依赖框架内部实现）
+- ✅ 身份检查脚本放 `~/.hermes/scripts/`（全局可用，不依赖框架内部实现）
 - ✅ lark-cli 升级风险：config.json 结构可能变，但有兜底（拒绝操作而非偷偷用团队负责人权限）
 
 ### 验证充分性原则（2026-06-15 用户纠正）
@@ -1077,3 +1081,6 @@ Z:<old_len_base36>><change_base36><operations>$<text>
 
 ---
 
+
+
+<!-- --wait 废弃口径已补完(2026-08-18):企微硬报错改用 --wait-done,飞书仍用 --wait。改动同时覆盖 SKILL.md 与 references/pitfalls.md。 -->

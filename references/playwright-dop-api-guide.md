@@ -88,9 +88,9 @@ async def check_cookies(state_file):
 2026-07-15 用户进一步要求："以后你过期前就提醒我，不要过期了再跟我说" — cookie 预警从 2 天提前到 4 天（7 天寿命过半即提醒）。
 
 **生产环境 storage_state 路径**（本机实际使用，三个文件必须保持同步）：
-- `~/.config/wecom-doc/states/_shared.json` — 主力（`wecom_login.py` 扫码脚本写入此文件，所有检查脚本优先读此文件）
-- `~/.config/wecom-doc/workspace/wecom_browser_state.json` — 备用（同步脚本读此文件）
-- `~/.config/wecom-doc/workspace/wecom_cookies.json` — `wecom_auto_renew.py` 的 COOKIE_FILE（cron 续期检查用）
+- `~/.hermes/scripts/wecom_states/_shared.json` — 主力（`wecom_login.py` 扫码脚本写入此文件，所有检查脚本优先读此文件）
+- `~/.hermes/workspace/wecom_browser_state.json` — 备用（同步脚本读此文件）
+- `~/.hermes/workspace/wecom_cookies.json` — `wecom_auto_renew.py` 的 COOKIE_FILE（cron 续期检查用）
 - ⚠️ 三个文件必须同步更新！2026-06-27 踩坑：扫码续期后只更新前两个、漏了第三个 → cron 读旧文件发误告警
 
 **检查方法**：读 storage_state JSON → 遍历 cookies → 找 `wedoc_sid` 的 `expires` 字段（Unix 时间戳）→ 距过期 < 2 天则提醒用户。
@@ -98,21 +98,21 @@ async def check_cookies(state_file):
 **续期命令**：
 ```bash
 cd ./scripts
-python3 wecom_login.py --state ~/.config/wecom-doc/states/_shared.json --qr /tmp/wecom_qr.png --timeout 300
+python3 wecom_login.py --state ~/.hermes/scripts/wecom_states/_shared.json --qr /tmp/wecom_qr.png --timeout 300
 ```
 QR 生成后通过企微发给用户扫码，扫完自动保存新 storage_state。
 
 **⚠️ 发送 QR 图片必读（2026-06-14 + 2026-07-08 两次踩坑）**：
 - `MEDIA:/tmp/wecom_qr.png` 会被 gateway 的 `media_delivery_allow_dirs` 白名单**静默拦截**（`/tmp/` 不在白名单），用户看不到图片且无报错
-- **必须先复制到白名单目录**再发：`cp /tmp/wecom_qr_rgb.png ~/.config/wecom-doc/workspace/wecom_qr_send.png` 然后 `MEDIA:~/.config/wecom-doc/workspace/wecom_qr_send.png`
+- **必须先复制到白名单目录**再发：`cp /tmp/wecom_qr_rgb.png ~/.hermes/workspace/wecom_qr_send.png` 然后 `MEDIA:~/.hermes/workspace/wecom_qr_send.png`
 - QR 还需转 RGB（1-bit grayscale PNG 企微客户端无法渲染）：`Image.open(qr).convert('RGB').resize((800,800), Image.NEAREST).save(qr_rgb)`
-- 如果企微发图仍失败，双保险发飞书：`send_message(target=feishu, message="MEDIA:~/.config/wecom-doc/workspace/wecom_qr_send.png")`
+- 如果企微发图仍失败，双保险发飞书：`send_message(target=feishu, message="MEDIA:~/.hermes/workspace/wecom_qr_send.png")`
 - 详见 `references/wecom-messaging.md` 踩坑1
 
 同时复制到**所有三个**路径（缺一不可，否则 cron 监控读旧文件会误告警）：
 ```bash
-cp ~/.config/wecom-doc/states/_shared.json ~/.config/wecom-doc/workspace/wecom_browser_state.json
-cp ~/.config/wecom-doc/states/_shared.json ~/.config/wecom-doc/workspace/wecom_cookies.json
+cp ~/.hermes/scripts/wecom_states/_shared.json ~/.hermes/workspace/wecom_browser_state.json
+cp ~/.hermes/scripts/wecom_states/_shared.json ~/.hermes/workspace/wecom_cookies.json
 ```
 
 可用 `scripts/check_cookie_expiry.py` 自动检查过期状态。

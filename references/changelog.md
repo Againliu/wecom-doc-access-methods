@@ -4,6 +4,14 @@
 
 ## 更新日志
 
+- **2026-08-24** (v5.7.0): 📋 **三周工作复盘(2026-08-04~08-24)系统化**
+  - 新增 `references/retrospective-2026-08.md`:从 27 个相关会话(state.db 直查)提取 21 条教训
+    - 同步管线专项 L1-L14:机器人身份建文档/listAfter=PREPEND/表格形态要求4次才落实/删除假成功/多文档台账/MCP图片配额/sheet v2端点/markdown残留/标题type=12-17/Wiki API字段名/多用户隔离/全量重建代价/发布版本号盲区/字号缩放虚惊
+    - 行为级 B1-B7:readback验证/重复纠正=流程缺陷/先盘点再动手/修复闭环六步/假成功API清单/大文档走UI/任务护照落盘
+    - 当前管线状态快照(v3/发布/cron/图片/权限/cookie) + 3 条开放问题
+  - SKILL.md 速记区新增四条铁律:ret=0≠生效(假成功清单)/发布判据三交叉/正式文档用户身份创建/listAfter逆序
+  - 参考文件索引表新增复盘文档条目
+
 - **2026-08-10** (v5.4.0): 🚀 **Pro 文档全元素提取 + 扫码自动闭环**
   - **Pro 文档解析增强**：`_parse_opendoc_text` 新增 Pro/JSON 格式（`isPro:true`）的完整元素提取。旧版只处理 `padHTML` 路径（Pro 文档 `padHTML` 为空），正文在 OT 结构 `clientVars.collab_client_vars.initialAttributedText` 的 6441 个 mutations 中。新增提取：
     - 图片 CDN URL（`pr.drawing.graphicData.pic.blipFill.blip.embed`），24 张唯一 URL
@@ -148,7 +156,7 @@
 - **2026-06-26** (v4.1.2): 🔧 **认证机制区分 + cookie 主动提醒**
   - **新增 Pitfall**: 不要混淆三种认证机制（飞书 token / 企微 MCP 授权 851014 / 企微浏览器 cookie storage_state）— 踩坑场景：用户说"扫码续期"，误启动飞书 lark-cli QR 登录，实际是企微浏览器 cookie 续期
   - **新增主动提醒机制**: cookie 到期前 2 天主动通知用户扫码续期（团队负责人要求机器人及时提醒）
-  - **新增生产环境 storage_state 路径**: `~/.config/wecom-doc/states/_shared.json`（主力）+ `~/.config/wecom-doc/workspace/wecom_browser_state.json`（备用）
+  - **新增生产环境 storage_state 路径**: `~/.hermes/scripts/wecom_states/_shared.json`（主力）+ `~/.hermes/workspace/wecom_browser_state.json`（备用）
   - **新增脚本** `scripts/check_cookie_expiry.py`: 检查 cookie 剩余天数，距过期 ≤N 天输出警告，供 cron 主动提醒
   - **背景**: 企微文档浏览器 cookie 约 2 周过期，之前没有主动提醒机制，总是等过期了才发现
   - **新增 `_read_mind` 方法**：通过 `dop-api/get/mind` API 提取完整 JSON 节点树

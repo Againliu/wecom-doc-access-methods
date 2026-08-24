@@ -25,7 +25,7 @@ WeChat (WeCom) 平台对 outbound media 的支持依赖 gateway 的 `_deliver_me
 ```
 1. 发图片后 → 立即问用户"能看到吗？"
 2. 如果看不到：
-   a. 检查 gateway log: grep "media\|image\|deliver" ~/.config/wecom-doc/logs/gateway.log
+   a. 检查 gateway log: grep "media\|image\|deliver" ~/.hermes/logs/agent.log  ⚠️ 2026-08-18 更正:原写 `~/.config/wecom-doc/logs/gateway.log`,该路径不存在;且 journal 只有 WARNING+,INFO 只在 agent.log。
    b. 检查文件是否存在且权限正确
    c. 换方式重发（优先飞书 → lark-cli → nginx）
 3. 如果反复失败 → 查 gateway 源码定位根因，不要换着花样盲试

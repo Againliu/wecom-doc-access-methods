@@ -220,3 +220,10 @@ pad_ver = r3.json()['body']['meta']['pad_ver']
 - 创建 114 个新页面 + 设置 99 个层级关系 + 删除 56 个多余页面 + 补充 43 个缺失页面
 - 最终 130 页面与飞书知识库 130 节点完全匹配
 - 零失败
+
+## 增量同步实战（2026-08-13，正式版 `a1_AGIAUQZXAMsCNqOMuvFhKQxaiQ4F3`）
+
+- 标题匹配对比：飞书 130 节点 vs 企微 128 页 → 仅差 2 个 sheet 节点（设备型号说明、产品关系适配表），零删除/改名/移动
+- 连续两次 submit_command 时 pad_ver 刷新有延迟：第一次创建后立刻 opendoc 拿到的 pad_ver 仍是旧值 741，但服务端实际已接受第二次 741 → 每次写入后 opendoc 刷新的策略仍是对的，无需重试
+- 用纯 `urllib.request` + Cookie header 即可，不需要 requests session
+- opendoc 用 `application/json;charset=UTF-8`，submit_command 用 `application/protojson`，两者不能混

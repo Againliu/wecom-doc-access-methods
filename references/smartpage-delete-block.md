@@ -1,4 +1,30 @@
-# SmartPage 删除 Block — 完整探索记录（2026-07-17）
+# SmartPage 删除 Block — 完整探索记录（2026-07-17，2026-08-12 补充）
+
+## 🚨 页面级删除也假成功（2026-08-12 实测）
+
+operation=5 不仅对内容块假成功，**对页面级删除同样假成功**：
+- 对 22 个子页面执行 operation=5 listRemove，ret=0 无错误
+- 但 root children 数量不变（仍为 22）
+- opendoc readback 显示 cur_blocks 清空，**但用户打开文档看到图文内容仍在**
+- 非所有者 cookie 执行写操作时服务端静默吞掉，API 层和 readback 层共用同一假状态
+
+**结论**：SmartPage 任何写操作（内容块清空、页面删除、页面移动）的 API readback 都不可信。验证写操作唯一可靠方式：Playwright 截图或让用户打开文档确认。
+
+## opendoc API 响应结构变更（2026-08-12 实测）
+
+SmartPage 的 opendoc API 响应不再有 `body.root`：
+
+```python
+# ❌ 旧代码 — KeyError
+root = d['body']['root']
+
+# ✅ 新代码
+body = d.get('body', {})
+allb = {b['id']: b for b in body.get('top_blocks', []) + body.get('cur_blocks', [])}
+pages = [b for b in allb.values() if b.get('type') == 5]
+```
+
+body keys: `meta, top_blocks, cur_blocks, client_vars, apool, cur_page_id, publish_info`
 
 ## 浏览器键盘路径（✅ 已验证跨 session 持久化）
 
