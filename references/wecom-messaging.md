@@ -67,14 +67,14 @@ MEDIA:/absolute/path/to/file.png
 - 企微发图的 `MEDIA:` 在 gateway 层面可能被路径白名单拦截
 - 如果企微发图不确定能成功，**双保险**：同时发飞书
 - nginx HTTP 链接在外网可能不通，不能依赖
-- 发图失败后**必须检查 gateway 日志**（`~/.config/wecom-doc/logs/gateway.log`）看是否有 media delivery 错误
+- 发图失败后**必须检查 gateway 日志**（`~/.hermes/logs/agent.log`）看是否有 media delivery 错误。⚠️ 2026-08-18 更正:原文写的 `~/.config/wecom-doc/logs/gateway.log` **不存在**(该目录整个没有,也没有 gateway.log 这个文件),照着 grep 会一无所获并误判成“没有错误”。另注意 **journal 只有 WARNING 及以上**,INFO 全在 agent.log 里 —— 只看 journalctl 会漏掉绝大部分线索。
 
 ### 踩坑1 复现（2026-07-08 — 同一坑第二次踩）
 - 场景：cookie 续期扫码，QR 生成在 `/tmp/wecom_qr_rgb.png`，用 `MEDIA:/tmp/wecom_qr_rgb.png` 发企微
 - 结果：用户看不到图片，说"又不会发图片了？"
 - 根因：和 2026-06-14 完全相同 — `/tmp/` 不在 `media_delivery_allow_dirs` 白名单，静默拦截
-- **修复**：`cp /tmp/wecom_qr_rgb.png ~/.config/wecom-doc/workspace/wecom_qr_send.png` → `MEDIA:~/.config/wecom-doc/workspace/wecom_qr_send.png`
-- **铁规**：任何要发给用户的文件，**永远先复制到 `~/.config/wecom-doc/workspace/`** 再用 `MEDIA:` 发，不要直接发 `/tmp/` 路径
+- **修复**：`cp /tmp/wecom_qr_rgb.png ~/.hermes/workspace/wecom_qr_send.png` → `MEDIA:~/.hermes/workspace/wecom_qr_send.png`
+- **铁规**：任何要发给用户的文件，**永远先复制到 `~/.hermes/workspace/`** 再用 `MEDIA:` 发，不要直接发 `/tmp/` 路径
 
 ### 踩坑2：lark-cli 跨应用发文件
 - `lark-cli im +messages-send --user-id <open_id> --file ./file.png --as bot`

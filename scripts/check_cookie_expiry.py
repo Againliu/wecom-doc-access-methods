@@ -16,7 +16,15 @@
 
 import json, os, sys, time, argparse, datetime
 
+# 2026-08-18:原清单只有下面两个 ~/.config/wecom-doc/ 路径,而该布局早已废弃
+# (scripts/ 与 workspace/ 子目录都不存在,states/ 里只剩一个 _auth_history.json)。
+# 后果是本脚本对每个文件都返回 status=missing 却**正常退出、不报错** ——
+# 一个永远看不到 cookie 的 cookie 过期检查器,静默失效。
+# 实跑取证后改为:真实路径在前(与 wecom_auth_flow.py 的 LEGACY_STATES_DIR /
+# WORKSPACE 常量一致),旧路径保留在后兜底。
 DEFAULT_STATE_FILES = [
+    "~/.hermes/scripts/wecom_states/_shared.json",
+    "~/.hermes/workspace/wecom_browser_state.json",
     "~/.config/wecom-doc/states/_shared.json",
     "~/.config/wecom-doc/workspace/wecom_browser_state.json",
 ]
@@ -25,6 +33,7 @@ KEY_COOKIES = ("wedoc_sid", "wedoc_ticket")
 
 
 def check_state(state_file, warn_days):
+    state_file = os.path.expanduser(state_file)  # 2026-08-24: 修 expanduser 缺失,~ 路径从未生效
     if not os.path.exists(state_file):
         return {"file": state_file, "status": "missing", "msg": "文件不存在"}
 
