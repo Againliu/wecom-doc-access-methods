@@ -1,6 +1,6 @@
 ---
 name: wecom-doc-access-methods
-version: 5.7.1
+version: 5.8.0
 description: >
   读取：s3_ 智能表格(dop-api全量)、e3_ 电子表格(原生JS API)、w3_ 微文档(opendoc API完整正文)、m4_ 思维导图(dop-api/get/mind)。
   编辑：w3_ 微文档(MCP edit_doc_content全量覆写 + 浏览器键盘增删改)、e3_ 电子表格(MCP sheet_* + 浏览器 mutation API 写入)、s3_ 智能表格(MCP smartsheet_* 17种字段类型)。
@@ -210,6 +210,7 @@ for sheet_name, sheet_data in sheets.items():
 > - 🚨 **发布状态不能只看版本号**:权限变更等编辑器外操作产生待发布但不推 pad_ver(2026-08-24 假绿事故)。判据=version+publish_time+面板态三交叉;大文档发布走 UI 不走 HTTP API
 > - 🚨 **正式文档用用户本人身份创建**(浏览器 per-user cookie),机器人身份建的文档用户只是协作者,删改受限(v0 文档废弃教训)
 > - 🚨 **listAfter 是 PREPEND**:按源树正序建页=顺序全反,必须逆序提交+readback 比对
+> - 🚨 **图片管线修好后存量占位符不会自愈**(2026-08-24 实测,5页74张 `[图片: alt]` 留存3天):增量同步"未变页面不重建",修复前同步的页面保持旧缺陷。修完图片管线必须:全量审计 → `resync_problem_pages.py` 定向重同步(页面ID不变只重建内容) → 独立读回验证真图块数=源图数(当日 74/74 修复,clean 94.6%→98.4%)。诊断注意:源md里是 authcode URL 时管线本身是通的(实测 200/PNG),别先怀疑外链
 
 - 🚨 **长文档/审核报告必须用 SmartPage 智能文档，不用 w3_ 微文档**（2026-07-24 团队负责人明确要求："这个微文档排版很差，要用智能文档"）。w3_ 微文档渲染 Markdown 表格/层级排版差，SmartPage 排版正常。交付报告类内容默认 `wecom_doc_writer.py smartpage create-with-images --title "标题" --markdown @file`
 - 🚨 **smartpage create 的 pages JSON 不支持 @file**：`--pages '[{"page_title":"x","content":"@/path/file.md"}]'` 里的 `@file` 不会被解析，内容会变成字面字符串。必须用 `smartpage create-with-images --markdown @file`（无图片也可用）
