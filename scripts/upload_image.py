@@ -32,7 +32,7 @@ def get_mcp_url():
     if explicit:
         return explicit
     config_path = Path(
-        os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw/openclaw.json")
+        os.environ.get("OPENCLAW_CONFIG_PATH", os.path.expanduser("~/.openclaw/openclaw.json"))
     )
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))

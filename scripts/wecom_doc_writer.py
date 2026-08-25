@@ -66,7 +66,7 @@ def get_mcp_url():
     # fallback: 只读取小明自己的 OpenClaw 配置，绝不跨到 Hermes。
     p = os.environ.get(
         "OPENCLAW_CONFIG_PATH",
-        "~/.openclaw/openclaw.json",
+        os.path.expanduser("~/.openclaw/openclaw.json"),
     )
     try:
         with open(p, encoding="utf-8") as f:

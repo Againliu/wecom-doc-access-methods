@@ -76,7 +76,7 @@ def _get_mcp_url():
     # gateway 单元有 InaccessiblePaths=hermes 家目录,读它必然拿不到值)
     try:
         import json
-        cfg_path = os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw/openclaw.json")
+        cfg_path = os.environ.get("OPENCLAW_CONFIG_PATH", os.path.expanduser("~/.openclaw/openclaw.json"))
         with open(cfg_path, encoding="utf-8") as f:
             cfg = json.load(f)
         for _, srv in (((cfg.get("mcp") or {}).get("servers")) or {}).items():
