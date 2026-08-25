@@ -10,7 +10,7 @@
 凭据来源（按优先级）:
   1. 环境变量 WECOM_MCP_URL（完整 URL 含 apikey）
   2. 环境变量 WECOM_MCP_APIKEY（自动拼 URL）
-  3. ~/.hermes/config.yaml 或 ~/.openclaw/config.yaml 的 mcp_servers（robot-doc）
+  3. ~/.openclaw/openclaw.json 的 mcp.servers（robot-doc）
 
 用法示例:
   # s3_ 智能表格
@@ -63,21 +63,22 @@ def get_mcp_url():
     key = os.environ.get("WECOM_MCP_APIKEY", "")
     if key:
         return f"{MCP_BASE}?apikey={key}"
-    # fallback: 从 agent 配置文件读（可选，非 Hermes/OpenClaw 环境自动跳过）
-    for cfg_path in ("~/.hermes/config.yaml", "~/.openclaw/config.yaml"):
-        p = os.path.expanduser(cfg_path)
-        if not os.path.exists(p):
-            continue
-        try:
-            import yaml
-            with open(p) as f:
-                cfg = yaml.safe_load(f)
-            for _name, server in (cfg.get("mcp_servers") or {}).items():
-                u = (server or {}).get("url", "")
-                if "robot-doc" in u:
-                    return u
-        except Exception:
-            continue
+    # fallback: 只读取小明自己的 OpenClaw 配置，绝不跨到 Hermes。
+    p = os.environ.get(
+        "OPENCLAW_CONFIG_PATH",
+        "~/.openclaw/openclaw.json",
+    )
+    try:
+        with open(p, encoding="utf-8") as f:
+            cfg = json.load(f)
+        for _name, server in (
+            ((cfg.get("mcp") or {}).get("servers") or {}).items()
+        ):
+            u = (server or {}).get("url", "")
+            if "robot-doc" in u:
+                return u
+    except Exception:
+        pass
     return ""
 
 
