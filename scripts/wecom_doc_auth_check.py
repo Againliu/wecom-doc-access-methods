@@ -72,12 +72,15 @@ def _get_mcp_url():
     _kp = "api" + "key"
     if _k:
         return f"https://qyapi.weixin.qq.com/mcp/robot-doc?{_kp}={_k}"
+    # 只读小明自己的 OpenClaw 配置，绝不跨到 Hermes(身份隔离边界:
+    # gateway 单元有 InaccessiblePaths=hermes 家目录,读它必然拿不到值)
     try:
-        import yaml
-        with open(os.path.expanduser("~/.hermes/config.yaml")) as f:
-            cfg = yaml.safe_load(f)
-        for _, srv in (cfg.get("mcp_servers") or {}).items():
-            u = srv.get("url", "")
+        import json
+        cfg_path = os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw/openclaw.json")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        for _, srv in (((cfg.get("mcp") or {}).get("servers")) or {}).items():
+            u = (srv or {}).get("url", "")
             if "robot-doc" in u:
                 return u
     except Exception:

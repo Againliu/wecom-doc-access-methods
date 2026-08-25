@@ -14,7 +14,7 @@
   - 无 base64 大小限制（直调 MCP server HTTP 接口，绕过 Hermes 客户端 8KB 限制）
   - 120 秒超时
   - 图片质量几乎无损（99.3%）
-  - 自动从 ~/.hermes/config.yaml 读取 MCP URL + apikey
+  - 自动从小明自己的 OpenClaw 配置读取 MCP URL + apikey
 
 关键发现（2026-07-16 实测）:
   - Hermes MCP upload_doc_image 工具有 ~8KB base64 限制（客户端层）
@@ -24,21 +24,27 @@
   - 必须加 Accept: application/json header（否则报 Not Acceptable）
 """
 import sys, os, base64, json, argparse, requests
+from pathlib import Path
 
 def get_mcp_url():
-    """从 hermes config 读取 MCP URL + apikey"""
-    config_path = os.path.expanduser("~/.hermes/config.yaml")
+    """从环境变量或小明自己的 OpenClaw 配置读取 MCP URL。"""
+    explicit = os.environ.get("WECOM_MCP_URL", "")
+    if explicit:
+        return explicit
+    config_path = Path(
+        os.environ.get("OPENCLAW_CONFIG_PATH", "~/.openclaw/openclaw.json")
+    )
     try:
-        import yaml
-        with open(config_path) as f:
-            cfg = yaml.safe_load(f)
-        for name, server in (cfg.get("mcp_servers") or {}).items():
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        for _, server in (
+            ((cfg.get("mcp") or {}).get("servers") or {}).items()
+        ):
             url = server.get("url", "")
             if "robot-doc" in url:
                 return url
     except Exception:
         pass
-    return os.environ.get("WECOM_MCP_URL", "")
+    return ""
 
 def upload_image(image_path, docid, title=None):
     """上传图片，返回 CDN URL"""
