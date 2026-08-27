@@ -165,6 +165,8 @@ def main():
     p_rm = sub.add_parser("remove-user", help="删除用户 cookies")
     p_rm.add_argument("user_id")
 
+    sub.add_parser("doctor", help="安装健康自检：Python 包 → 浏览器二进制 → 真实 launch→空白页→close（不依赖登录态）")
+
     args = parser.parse_args()
     reader = WeComDocReader(state_dir=args.state_dir)
 
@@ -187,16 +189,19 @@ def main():
         r = reader.list_users()
     elif args.cmd == "remove-user":
         r = reader.remove_user(args.user_id)
+    elif args.cmd == "doctor":
+        from .browser import doctor
+        r = doctor()
     else:
         parser.print_help()
         return
 
     # 输出 JSON（如果文本太长，截断 text 字段只显示 preview）
     output = r.copy() if isinstance(r, dict) else r
-    if isinstance(output, dict) and "text" in output:
-        text = output["text"]
-        if len(text) > 2000:
-            output["text_preview"] = text[:2000]
-            output["text_truncated"] = True
-            del output["text"]
+    if isinstance(output, dict):
+        for f in ("text", "full_text"):
+            if f in output and len(output[f]) > 2000:
+                output[f"{f}_preview"] = output[f][:2000]
+                output[f"{f}_truncated"] = True
+                del output[f]
     print(json.dumps(output, ensure_ascii=False, indent=2))

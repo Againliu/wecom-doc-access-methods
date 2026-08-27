@@ -24,6 +24,7 @@ _URL_PREFIX_TO_TYPE = {
     "w3": "doc",          # 微文档
     "e3": "sheet",        # 旧格式电子表格
     "m4": "mind",         # 思维导图
+    "a1": "smartpage",    # 智能画布 SmartPage（纯 HTTP 读取，零浏览器依赖）
 }
 
 # dop-api 字段类型 ID

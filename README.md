@@ -25,10 +25,15 @@ git clone https://github.com/Againliu/wecom-doc-access-methods.git
 cd wecom-doc-access-methods
 pip install -r requirements.txt && playwright install chromium
 
-# 2. Set your WeCom MCP API key (from admin console → AI Helper → MCP config)
+# 2. Verify the install REALLY works (3 layers: python pkg / skill files / browser binary)
+PYTHONPATH=./scripts python3 -m wecom_doc_reader doctor
+#   → playwright install chromium 下载约 165MB，慢/失败也没关系：
+#     doctor 会自动 fallback 到系统 Chrome；都没有时输出结构化修复命令
+
+# 3. Set your WeCom MCP API key (from admin console → AI Helper → MCP config)
 export WECOM_MCP_APIKEY=your_key_here
 
-# 3. Read any document (browser path — no row limit)
+# 4. Read any document (browser path — no row limit)
 PYTHONPATH=./scripts python3 -m wecom_doc_reader read \
   --user <wecom_userid> --url <doc_url> --state /tmp/state.json
 
@@ -46,7 +51,7 @@ python3 scripts/wecom_doc_writer.py s3 add --url <url> --sheet-id <id> \
 | **Smart Table** (智能表格) | `s3_` | ✅ | ✅ CRUD | MCP (write) + browser dop-api (read, no row limit) |
 || **Spreadsheet** (电子表格) | `e3_` | ✅ | ✅ range/append + browser mutation API | MCP (range write) + browser JS API (read) + browser mutation API (cell write, v5.3.0) |
 | **Micro-Doc** (微文档) | `w3_` | ✅ | ✅ create/edit* | MCP + browser opendoc API. *Edit only on bot-created docs |
-| **SmartPage** (智能文档) | `/smartdoc/` | ✅ | ✅ create + images | MCP export (read) + MCP create (write). No edit API — recreate |
+| **SmartPage** (智能画布) | `a1_` `/smartpage/a1_` | ✅ | ✅ create + images | smartcanvasread pure HTTP (read, v5.9.0: first-class doc_type + page tree + completeness metrics, zero browser dependency) + MCP/HTTP write |
 | **Mind Map** (思维导图) | `m4_` | ✅ | — | Browser dop-api/get/mind (read only) |
 | Form / Slide / Flowchart | `/form/` etc. | ⚠️ | — | DOM text extraction (read only) |
 
@@ -355,6 +360,7 @@ See **`references/testing-plan.md`** — 18 test cases + 7 known-pitfall checks,
 
 | Version | Key Changes |
 |---------|-------------|
+| **v5.9.0** | **安装契约修复 + SmartPage 一等类型**（来自 Codex/macOS v5.8.0 实战反馈）：① `browser.py` 共享启动 helper，统一全部 9 个 `chromium.launch` 点（reader 6 + login/fetch/status 3），fallback 链 `PLAYWRIGHT_EXECUTABLE` → `PLAYWRIGHT_CHANNEL` → 系统 Chrome 自动探测 → bundled Chromium，全失败输出结构化 JSON（缺失层级+已查路径+修复命令），不再甩 traceback。② `doctor` 子命令：三层依赖逐层检查 + 真实 launch→about:blank→close，修复"19/19 离线通过但首次运行无 Chromium"的三层依赖误报（Python 包/Skill 文件/浏览器二进制是独立三层）。③ a1_ 前缀映射 `doc_type=smartpage`，`_read_smartpage` 纯 HTTP 读取（smartcanvasread/opendoc + get_block_filter_by_type 分页），零浏览器依赖，带完整性指标（page_count/block_count/text_length/attachment_count/orphan_block_count/has_more_remaining，如实报告 API 10k 块上限）。④ `wecom_status.py` MCP/浏览器分栏 + MCP 失效自动 fallback 浏览器读取（两通道独立）。⑤ 测试套件离线模式自动跑 doctor，"ALL PASS"改为"离线+doctor 通过（在线未测）"。实测：无浏览器故障态结构化报错 ✅ / npmmirror 镜像装 Chrome 后 doctor 全绿 ✅ / 89 页 10k 块 SmartPage E2E ✅。Chromium 官方 CDN 卡死时用 npmmirror 镜像 45s 下完 168MB（官方 57min 0%）。 |
 | **v5.7.1** | **发布链路修复 + 全平台推送**: 修 publish_skill.sh 三个坑（脱敏扫描集≠发布集、curl\|grep -m1 在 pipefail 下 exit 23、GitHub 远端领先需先 rebase）。skill 正文全量脱敏（本地绝对路径改写为 `~` 相对形式、复盘文档人名泛化后全平台发布）、check_cookie_expiry.py 补 expanduser。六端版本闭环验证。 |
 | **v5.7.0** | **三周实战复盘系统化**: 新增 `references/retrospective-2026-08.md`，从 27 个会话提取 21 条教训（同步管线专项 L1-L14 + 行为级 B1-B7）。核心新增：企微 HTTP API ret=0 ≠ 生效的假成功清单、发布状态判定必须 version+publish_time+面板态三交叉（权限变更不推 pad_ver 的盲区）、正式文档必须用用户本人身份创建、`listAfter` 是 PREPEND 需逆序提交。 |
 | **v5.6.0** | **SmartPage HTTP API 写入突破**: `submit_command` + `Content-Type: application/protojson` 实现创建/删除/移动/改标题全操作，不需要 WebSocket/浏览器。operation 枚举（set=1/listAfter=4/listRemove=5）、block ID 6 字符、`enabled` 为 bool、`childId` 驼峰。新增 `references/smartpage-http-api-write.md`。实测 130 页面全量同步零失败。 |

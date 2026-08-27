@@ -139,8 +139,39 @@ def check_mcp_key():
         return {"status": "error", "detail": f"MCP check failed: {e}"}
 
 
+def check_browser():
+    """Check browser layer: real launch → about:blank → close (no login needed)."""
+    try:
+        from wecom_doc_reader.browser import doctor
+        doc = doctor()
+        if doc.get("success"):
+            layers = {l["layer"]: l for l in doc.get("layers", [])}
+            bl = layers.get("browser_launch", {})
+            return {
+                "status": "ok",
+                "detail": f"浏览器真实启动成功（{bl.get('detail', '')}）",
+                "system_chrome": bl.get("system_chrome"),
+            }
+        layers = doc.get("layers", [])
+        failed = next((l for l in layers if not l.get("ok")), {})
+        return {
+            "status": "failed",
+            "detail": failed.get("error", "browser launch failed"),
+            "fix": "; ".join(failed.get("fix_commands", [])) or "python3 -m playwright install chromium",
+            "report": failed,
+        }
+    except ImportError:
+        return {"status": "skip", "detail": "wecom_doc_reader.browser not importable (cwd problem?)"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
 def smoke_test(test_url, user_id=None):
-    """Quick read smoke test on a real document."""
+    """Quick read smoke test on a real document.
+
+    2026-08-27 反馈修复：MCP 失败不再终止 smoke——浏览器路径独立于 MCP，
+    MCP key 无效/过期时自动 fallback 到浏览器读取。
+    """
     try:
         # try MCP path first
         apikey = os.environ.get("WECOM_MCP_APIKEY", "")
@@ -168,11 +199,49 @@ def smoke_test(test_url, user_id=None):
                 data = resp.json()
                 if "result" in data:
                     return {"status": "ok", "method": "MCP", "detail": f"Read OK: {docid}"}
+                # MCP 失败 → 尝试浏览器 fallback（两条通道独立，MCP 坏不代表读不了）
+                fb = _browser_read_fallback(test_url, user_id)
+                if fb:
+                    fb["mcp_error"] = str(data.get("error", ""))[:120]
+                    return fb
                 return {"status": "fail", "method": "MCP", "detail": str(data.get("error", ""))[:200]}
 
-        return {"status": "skip", "detail": "No MCP key or unsupported doc type for smoke test"}
+        # 无 MCP key → 直接浏览器
+        fb = _browser_read_fallback(test_url, user_id)
+        if fb:
+            return fb
+        return {"status": "skip", "detail": "No MCP key and no login state for browser smoke test"}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
+
+
+def _browser_read_fallback(test_url, user_id=None):
+    """MCP 不可用时用浏览器通道读文档（SmartPage 直接走纯 HTTP）。"""
+    try:
+        from wecom_doc_reader.reader import WeComDocReader
+        import asyncio as _aio
+        state_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wecom_states")
+        reader = WeComDocReader(state_dir=state_dir)
+        uid = user_id or os.environ.get("WECOM_USERID")
+        if not uid:
+            # 找最近的 state 文件
+            files = glob.glob(os.path.join(state_dir, "*.json"))
+            if not files:
+                return None
+            uid = os.path.basename(max(files, key=os.path.getmtime)).replace(".json", "")
+        if not reader._has_state(uid):
+            return None
+        r = _aio.run(reader.read(uid, test_url))
+        if r.get("success"):
+            m = r.get("metrics", {})
+            return {
+                "status": "ok",
+                "method": f"browser/{r.get('doc_type', '?')}",
+                "detail": f"Read OK via browser path: {r.get('doc_id', '')[:24]} {m}",
+            }
+        return None
+    except Exception:
+        return None
 
 
 def main():
@@ -189,21 +258,24 @@ def main():
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "cookie": check_cookie(user_id, args.state_dir),
         "mcp": check_mcp_key(),
+        "browser": check_browser(),
     }
 
     if args.test_url:
         result["smoke_test"] = smoke_test(args.test_url, user_id)
 
-    # overall status
-    statuses = [result["cookie"]["status"], result["mcp"]["status"]]
-    if "expired" in statuses or "invalid" in statuses:
+    # overall status — MCP 与浏览器两条通道独立：浏览器通就还能读文档
+    statuses = [result["cookie"]["status"], result["browser"]["status"]]
+    if "failed" in statuses or "corrupt" in statuses or "expired" in statuses:
         result["overall"] = "action_required"
-    elif "missing" in statuses and all(s == "missing" for s in statuses):
+    elif all(s in ("missing", "skip") for s in [result["cookie"]["status"], result["browser"]["status"]]):
         result["overall"] = "not_configured"
-    elif "error" in statuses or "corrupt" in statuses:
+    elif "error" in statuses:
         result["overall"] = "error"
     else:
         result["overall"] = "ok"
+    if result["mcp"]["status"] in ("expired", "invalid"):
+        result["mcp"]["note"] = "MCP 通道失效不影响浏览器通道 — 可继续用 wecom_login.py 扫码 + read 读取"
 
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -225,6 +297,15 @@ def main():
         print(f"\n  {icon} MCP API Key: {m['detail']}")
         if m.get("fix"):
             print(f"     → Fix: {m['fix']}")
+        if m.get("note"):
+            print(f"     → Note: {m['note']}")
+
+        # browser
+        b = result["browser"]
+        icon = {"ok": "✅", "failed": "❌", "skip": "⏭️", "error": "❌"}.get(b["status"], "❓")
+        print(f"\n  {icon} Browser (真实启动): {b['detail']}")
+        if b.get("fix"):
+            print(f"     → Fix: {b['fix']}")
 
         # smoke test
         if "smoke_test" in result:

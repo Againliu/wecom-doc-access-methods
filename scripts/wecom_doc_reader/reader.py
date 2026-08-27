@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from .browser import launch_browser, BrowserLaunchError
+
 import asyncio
 import json
 import os
@@ -456,9 +458,7 @@ class WeComDocReader:
 
         try:
             async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-                )
+                browser = await launch_browser(p)
                 # 不传旧 state，强制显示登录二维码
                 context = await browser.new_context(
                     viewport={"width": 800, "height": 600}
@@ -645,20 +645,33 @@ class WeComDocReader:
                 delay = RETRY_BASE_DELAY * (attempt - 1)
                 await asyncio.sleep(delay)
 
-            if info["doc_type"] == "s3":
-                last_result = await self._read_smartsheet(
-                    user_id, url, sheet_id or info["tab"]
-                )
-            elif info["doc_type"] == "e3":
-                last_result = await self._read_spreadsheet(
-                    user_id, url, sheet_id or info["tab"]
-                )
-            elif info["doc_type"] == "w3":
-                last_result = await self._read_doc_opendoc(user_id, url, info)
-            elif info["doc_type"] == "m4":
-                last_result = await self._read_mind(user_id, url, info)
-            else:
-                last_result = await self._read_dom(user_id, url, info)
+            try:
+                if info["doc_type"] == "s3":
+                    last_result = await self._read_smartsheet(
+                        user_id, url, sheet_id or info["tab"]
+                    )
+                elif info["doc_type"] == "e3":
+                    last_result = await self._read_spreadsheet(
+                        user_id, url, sheet_id or info["tab"]
+                    )
+                elif info["doc_type"] == "w3":
+                    last_result = await self._read_doc_opendoc(user_id, url, info)
+                elif info["doc_type"] == "m4":
+                    last_result = await self._read_mind(user_id, url, info)
+                elif info["doc_type"] == "a1":
+                    last_result = await self._read_smartpage(user_id, url, info)
+                else:
+                    last_result = await self._read_dom(user_id, url, info)
+            except BrowserLaunchError as e:
+                # 安装层故障：结构化报告直接透传，绝不重试也不压成字符串
+                return {
+                    "success": False,
+                    "doc_type": info["doc_type"],
+                    "url": url,
+                    "user_id": user_id,
+                    "install_report": e.report,
+                    "hint": "这是安装问题不是文档问题 — 先跑 doctor，按 install_report.fix_commands 修复",
+                }
 
             # 成功则直接返回
             if last_result.get("success"):
@@ -701,15 +714,8 @@ class WeComDocReader:
             return {"success": False, "error": "无法解析企微文档 URL"}
 
         state_file = str(self._state_file(user_id))
-        async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                ],
-            )
+        async with async_playwright() as p:
+            browser = await launch_browser(p)
             context = await browser.new_context(
                 storage_state=state_file,
                 viewport={"width": 1920, "height": 1080},
@@ -809,9 +815,7 @@ class WeComDocReader:
         state_file = str(self._state_file(user_id))
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-            )
+            browser = await launch_browser(p)
             ctx = await browser.new_context(
                 storage_state=state_file,
                 viewport={"width": 1280, "height": 800},
@@ -891,9 +895,7 @@ class WeComDocReader:
             return {"success": False, "error": f"无法解析 URL: {url}"}
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-            )
+            browser = await launch_browser(p)
             ctx = await browser.new_context(
                 storage_state=state_file,
                 viewport={"width": 1920, "height": 1080},
@@ -2036,9 +2038,7 @@ class WeComDocReader:
             sheet_id = info["tab"]
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-            )
+            browser = await launch_browser(p)
             ctx = await browser.new_context(
                 storage_state=state_file,
                 viewport={"width": 1280, "height": 800},
@@ -2265,6 +2265,166 @@ class WeComDocReader:
             "failed_sheets": failed if failed else None,
         }
 
+    # ── 3e. SmartPage（a1_ 智能画布）smartcanvasread ─────
+
+    async def _read_smartpage(self, user_id: str, url: str, info: dict) -> dict:
+        """读取 a1_ SmartPage：纯 HTTP + cookie，不依赖浏览器。
+
+        数据源: smartcanvasread/opendoc (页面树/cur_blocks) +
+                smartcanvasread/get_block_filter_by_type (全量块分页)。
+        完整性指标: page_count/block_count/text_length/attachment_count/
+                    has_more_remaining(API 单查询 10000 块上限)/failed_pages。
+        """
+        import requests
+
+        state_file = str(self._state_file(user_id))
+        pad_id = info.get("doc_id")
+        if not pad_id:
+            return {"success": False, "error": f"无法解析 SmartPage doc_id: {url}"}
+
+        # cookie: storage_state JSON → {name: value} dict（只保留 weixin 域）
+        try:
+            with open(state_file) as f:
+                state = json.load(f)
+            cookies = {
+                c["name"]: c["value"]
+                for c in state.get("cookies", [])
+                if "weixin" in c.get("domain", "")
+            }
+        except (OSError, json.JSONDecodeError) as e:
+            return {"success": False, "error": f"cookie state 不可读: {e}", "user_id": user_id}
+
+        headers = {"Content-Type": "application/json;charset=UTF-8"}
+
+        def _post(api, payload):
+            r = requests.post(
+                f"https://doc.weixin.qq.com/smartcanvasread/{api}",
+                json=payload, cookies=cookies, headers=headers, timeout=20,
+            )
+            return r.json()
+
+        # 1. opendoc: 拿 sid + 页面树 + 发布状态
+        d = _post("opendoc", {"pad_id": pad_id, "pad_ver": 0, "req_ts": int(time.time())})
+        body = d.get("body", {})
+        if not body:
+            return {
+                "success": False,
+                "doc_type": "smartpage",
+                "error": f"opendoc 响应为空（head={json.dumps(d.get('head', {}))[:200]}）— cookie 过期或无权限",
+                "user_id": user_id,
+            }
+        sid = d.get("param", {}).get("sid", "")
+        publish_info = body.get("publish_info") or {}
+        publish_state = "published" if publish_info.get("pb_doc_id") else "unpublished"
+
+        # 2. 全量块分页（type 5=页 1=文本 2=图片 12/13=标题 26/27/28=表格族）
+        sid_q = f"?sid={sid}&wedoc_xsrf=1" if sid else ""
+        block_url = f"https://doc.weixin.qq.com/smartcanvasread/get_block_filter_by_type{sid_q}"
+        TYPES = [1, 2, 5, 12, 13, 26, 27, 28]
+        seen: dict = {}
+        cur, api_calls, truncated = None, 0, False
+        while True:
+            payload = {"pad_id": pad_id, "type": TYPES, "limit": 200, "need_path": False}
+            if cur:
+                payload["cursor"] = cur
+            r = requests.post(block_url, json=payload, cookies=cookies,
+                              headers=headers, timeout=20)
+            b = r.json().get("body", {})
+            blks = b.get("blocks", [])
+            if not blks:
+                break
+            new = [x for x in blks if x["id"] not in seen]
+            if not new:
+                break
+            for x in new:
+                seen[x["id"]] = x
+            api_calls += 1
+            cur = b.get("cursor")
+            if not b.get("has_more"):
+                break
+            if len(seen) >= 10000:
+                # API 单查询上限（实测）：has_more=True 但继续翻返回同页
+                truncated = True
+                break
+
+        # 3. 组装页面树（parent_id 归属 + children 顺序）
+        pages = {x["id"]: x for x in seen.values() if x["type"] == 5}
+        by_parent: dict = {}
+        for x in seen.values():
+            if x["type"] != 5:
+                by_parent.setdefault(x["parent_id"], []).append(x)
+
+        def _block_text(b):
+            p = b.get("props", {})
+            if b["type"] in (1, 12, 13):
+                return p.get("title", {}).get("text", "")
+            if b["type"] == 2:
+                src = (p.get("media_props", {}).get("image_props", {})
+                       .get("display_source", ""))
+                return f"[图片: {src.split('?')[0].rsplit('/', 1)[-1][:48]}]"
+            if b["type"] in (26, 27, 28):
+                return "[表格块]"
+            return ""
+
+        def _page_dict(pid, depth=0):
+            pg = pages.get(pid, {})
+            kids = by_parent.get(pid, [])
+            # 按 children 顺序排（有 children 数组时以它为准）
+            order = {bid: i for i, bid in enumerate(pg.get("children", []))}
+            kids.sort(key=lambda x: order.get(x["id"], 10**9))
+            return {
+                "id": pid,
+                "title": pg.get("props", {}).get("title", {}).get("text", ""),
+                "depth": depth,
+                "block_count": len(kids),
+                "text": "\n".join(t for t in (_block_text(k) for k in kids) if t),
+                "children": [
+                    _page_dict(c, depth + 1)
+                    for c in pg.get("children", []) if c in pages
+                ],
+            }
+
+        # 顶层页：parent_id 不在 pages 里的 type=5 块
+        top_ids = [pid for pid, pg in pages.items() if pg["parent_id"] not in pages]
+        page_tree = [_page_dict(pid) for pid in top_ids]
+        all_text = "\n".join(
+            x["props"].get("title", {}).get("text", "")
+            for x in seen.values() if x["type"] in (1, 12, 13)
+        )
+        img_count = sum(1 for x in seen.values() if x["type"] == 2)
+        orphan_count = sum(
+            1 for x in seen.values()
+            if x["type"] != 5 and x["parent_id"] not in seen
+        )
+
+        def _count_leaves(nodes):
+            n = 0
+            for nd in nodes:
+                n += 1 + _count_leaves(nd.get("children", []))
+            return n
+
+        return {
+            "success": True,
+            "doc_type": "smartpage",
+            "method": "smartcanvasread/opendoc + get_block_filter_by_type",
+            "title": page_tree[0]["title"] if page_tree else "",
+            "url": url,
+            "publish_state": publish_state,
+            "published": publish_info.get("pb_doc_id") is not None,
+            "metrics": {
+                "page_count": _count_leaves(page_tree),
+                "block_count": len(seen),
+                "text_length": len(all_text),
+                "image_count": img_count,
+                "attachment_count": img_count,  # 附件即图片/媒体块（SmartPage 无独立附件类型）
+                "orphan_block_count": orphan_count,
+                "api_calls": api_calls,
+                "has_more_remaining": truncated,
+            },
+            "pages": page_tree,
+            "full_text": all_text,
+        }
+
     # ── 3d. 思维导图 dop-api ──────────────────────────────
 
     async def _read_mind(self, user_id: str, url: str, info: dict) -> dict:
@@ -2278,9 +2438,7 @@ class WeComDocReader:
             return {"success": False, "error": f"无法解析 doc_id: {url}"}
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(
-                headless=True, args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
-            )
+            browser = await launch_browser(p)
             ctx = await browser.new_context(
                 storage_state=state_file,
                 viewport={"width": 1280, "height": 800},
