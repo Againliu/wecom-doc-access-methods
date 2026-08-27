@@ -17,6 +17,7 @@
 """
 
 import asyncio, json, os, sys, time, argparse
+from wecom_doc_reader.browser import launch_browser
 from playwright.async_api import async_playwright
 
 
@@ -39,7 +40,7 @@ async def main(state_file, qr_file, timeout_sec, status_file=None):
     ws("starting", "启动 Playwright")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
+        browser = await launch_browser(p)
 
         qr_captured = False
 

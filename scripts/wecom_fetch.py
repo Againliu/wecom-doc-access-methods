@@ -15,6 +15,7 @@
 """
 
 import asyncio, json, sys, os, time, base64, zlib, argparse, re
+from wecom_doc_reader.browser import launch_browser
 from playwright.async_api import async_playwright
 
 
@@ -36,7 +37,7 @@ def extract_doc_and_sheet_ids(url):
 async def fetch_via_intercept(state_file, doc_url):
     """拦截 dop-api/get/sheet 响应"""
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
+        browser = await launch_browser(p)
         context = await browser.new_context(storage_state=state_file)
         page = await context.new_page()
         await page.route("**/*.woff*", lambda r: r.abort())
@@ -89,7 +90,7 @@ async def fetch_via_active(state_file, doc_url, pad_id=None, sheet_id=None):
             sheet_id = sid
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
+        browser = await launch_browser(p)
         context = await browser.new_context(storage_state=state_file)
         page = await context.new_page()
         await page.route("**/*.woff*", lambda r: r.abort())

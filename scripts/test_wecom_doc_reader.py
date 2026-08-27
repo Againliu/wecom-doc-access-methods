@@ -427,6 +427,18 @@ def main():
     # 单元测试（始终运行）
     all_results.extend(run_offline_tests())
 
+    # 安装健康检查（真实启动浏览器：launch→about:blank→close）
+    # 2026-08-27 Codex/macOS 反馈：19/19 离线通过但首次运行才发现没有 Chromium。
+    # 离线全绿 ≠ 安装可用；doctor 补上真实启动这一层。
+    from wecom_doc_reader.browser import doctor
+    doc = doctor()
+    r_doctor = TestResult("安装健康(doctor)")
+    if doc.get("success"):
+        r_doctor.ok("浏览器真实启动成功")
+    else:
+        r_doctor.fail("安装不完整: " + json.dumps(doc, ensure_ascii=False)[:200])
+    all_results.append(r_doctor)
+
     # 在线测试（需要浏览器）
     if not args.offline:
         online_results = asyncio.run(run_online_tests(args))
@@ -438,7 +450,11 @@ def main():
     total = total_pass + total_fail
 
     print(f"\n{'='*60}")
-    print(f"  总计: {total_pass}/{total} passed ({'ALL PASS' if total_fail == 0 else f'{total_fail} FAILED'})")
+    if args.offline and total_fail == 0:
+        print(f"  总计: {total_pass}/{total} passed (离线+doctor 通过)")
+        print(f"  注意: 在线读取能力未测 — 需登录态，用 --user <id> --url <doc> 跑在线测试")
+    else:
+        print(f"  总计: {total_pass}/{total} passed ({'ALL PASS' if total_fail == 0 else f'{total_fail} FAILED'})")
     print(f"{'='*60}")
 
     sys.exit(0 if total_fail == 0 else 1)

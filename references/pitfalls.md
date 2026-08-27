@@ -1083,4 +1083,63 @@ Z:<old_len_base36>><change_base36><operations>$<text>
 
 
 
+### 🚨 安装完整性 = 三层独立依赖（2026-08-27 Codex/macOS 实证）
+
+"安装不完整"不是 Skill 源码少下载了文件，而是安装契约只落地了 Skill 文件和 Python 依赖，**没有安装或验证 Playwright 自带的 Chromium 运行时**。Python 包 `playwright` 装了 ≠ 浏览器二进制可用。
+
+**三层独立依赖**：
+1. **Python 包**（`pip install -r requirements.txt`）— import 不报错就算通
+2. **Skill 文件**（scripts/wecom_doc_reader/ 等）— 文件存在 + 编译通过
+3. **浏览器二进制**（`playwright install chromium`，~165MB）— **真实启动一个 blank 页面并关闭**
+
+**铁律**：离线测试全绿（19/19 PASS）≠ 系统能读文档。必须有 `doctor` 命令做真实浏览器启动验证。
+
+### 🚨 doctor 命令：真实启动浏览器验证（2026-08-27 新增）
+
+`python3 -m wecom_doc_reader doctor` 做的事情：逐层检查 + **真实 launch→about:blank→close**。
+
+全失败时输出**结构化 JSON**（不是 traceback）：
+```json
+{"ok": false, "missing_layer": "browser_binary",
+ "checked": [{"env": "PLAYWRIGHT_EXECUTABLE", "found": false}, ...],
+ "fix_commands": ["pip install playwright && playwright install chromium",
+                   "或设置 PLAYWRIGHT_EXECUTABLE=/path/to/chrome"]}
+```
+
+**通用原则**：任何依赖外部二进制的 skill，install 后必须有真实启动验证，不能只检查 import 和文件存在。
+
+### 🚨 浏览器启动 fallback 链（2026-08-27 新增）
+
+bundled Chromium 版本不匹配（如 cache 有 v1155，当前 playwright 1.58.0 要 v1208）→ `Executable doesn't exist` 报错。
+
+统一 `launch_browser(p)` helper 的 fallback 顺序：
+1. `PLAYWRIGHT_EXECUTABLE` 环境变量（用户指定路径）
+2. `PLAYWRIGHT_CHANNEL` 环境变量（如 `chrome` 用系统 Chrome）
+3. 系统 Chrome 自动探测（`which google-chrome` / `which chromium-browser`）
+4. Playwright bundled Chromium（最后兜底）
+
+全失败 → 抛 `BrowserLaunchError`（结构化），read() 路径**不重试、不压扁为字符串**，直接透传给用户。
+
+### 🚨 SmartPage(a1_) 读取 = 纯 HTTP，零浏览器依赖（2026-08-27 新增）
+
+a1_ SmartPage 读取不需要 Playwright/Chromium。用 `sp_opendoc` + `get_block_filter_by_type` 分页，走 cookie 的 HTTP 请求即可。
+
+实测：10,000 块（API 上限）、91 页、191,834 字符，cursor 字典透传翻页零重叠。
+
+输出带完整性指标：`page_count` / `block_count` / `text_length` / `attachment_count` / `has_more_remaining`（达 10000 块上限时为 true）。
+
+**doctor 失败也能读 a1_** — SmartPage 读取路径不经过 browser.py。
+
+### 🚨 MCP 通道与浏览器通道相互独立（2026-08-27 新增）
+
+MCP 返回 851014（授权过期）/ 850001 时，**不等于读不了文档**。浏览器 cookie 通道（扫码登录）完全独立可用。
+
+`wecom_status.py` 已分栏显示 MCP / Browser 两通道状态。浏览器通就还能读。
+
+### 🚨 测试套件禁止"ALL PASS"过度承诺（2026-08-27 Codex 反馈）
+
+离线测试（import + 编译 + 文件检查）全绿时，文案不能写"全部通过"——这只证明代码能加载，不证明能读文档。
+
+**修复**：离线模式跑完后自动执行 `doctor`（真实浏览器启动），文案改为「离线测试 + doctor 通过；在线读取能力未测」。
+
 <!-- --wait 废弃口径已补完(2026-08-18):企微硬报错改用 --wait-done,飞书仍用 --wait。改动同时覆盖 SKILL.md 与 references/pitfalls.md。 -->
