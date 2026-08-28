@@ -1,6 +1,6 @@
 ---
 name: wecom-doc-access-methods
-version: 5.9.0
+version: 5.10.0
 description: >
   读取：s3_ 智能表格(dop-api全量)、e3_ 电子表格(原生JS API)、w3_ 微文档(opendoc API完整正文)、m4_ 思维导图(dop-api/get/mind)。
   编辑：w3_ 微文档(MCP edit_doc_content全量覆写 + 浏览器键盘增删改)、e3_ 电子表格(MCP sheet_* + 浏览器 mutation API 写入)、s3_ 智能表格(MCP smartsheet_* 17种字段类型)。
@@ -48,10 +48,22 @@ SmartPage(a1_) 读取是纯 HTTP，不依赖浏览器，doctor 失败也能读�
 | 写 e3_ / s3_ | MCP `sheet_*` / `smartsheet_*` | 同上 |
 | 图片上传 | 直调 MCP JSON-RPC（无 8KB 限制） | `references/mcp-api-guide.md` |
 | 安装自检 | doctor（真实启动浏览器） | `python3 -m wecom_doc_reader doctor` |
+| **扫码授权（auth_required 时）** | 转图直发 + 后台轮询，**不发 URL** | 见下方「扫码授权铁律」 |
 
 ## MCP 挂了 ≠ 读不了（通道独立）
 MCP 返回 850001/851014 时，浏览器通道（扫码 cookie）完全独立可用。
 `wecom_status.py` 已分栏显示 MCP / Browser 两通道，浏览器通就还能读。
+
+## 扫码授权铁律（2026-08-27 杨文丽案 8 轮返工换来的）
+1. **入口**：`python3 /root/.hermes/scripts/wecom_auth_flow.py --check <wecom_userid>`；
+   `auth_required` → `--wait-done`（不是 `--wait`），返回 `reply_media` + `poll_command`。
+2. **发二维码一律发图片，绝不发 URL/链接**：企微聊天里链接打不开（8-27 实测 7 轮扫不了）。
+   `reply_media` 是 1-bit PNG 裂图，必须先转换：
+   `python3 scripts/qr_to_wecom.py <qr.png> <qr.jpg>` → 1160×1160 白边 RGB JPEG，
+   用 `MEDIA:` 直发 + 提示「长按识别图中二维码」。
+3. **等待期禁止空转刷屏**：用 `poll_command` 后台轮询（terminal background 或下回合再查
+   `--status`），不要连发空消息催用户（同案 10+ 条空消息把会话推到 364 条）。
+4. **只查同一 transaction_id**：用户扫码后不要重新生成二维码，超时就明说并重新起一个。
 
 ## 卡住时的固定顺序（不要自创第四步）
 1. 读 `references/error-mapping.md` 对号入座；
