@@ -41,7 +41,7 @@
 - 🚨 **不要给用户发登录URL,直接生成QR码**（2026-07-16 踩坑）：给用户发 `https://doc.weixin.qq.com/scan-login?return_url=...` 链接,用户反馈"访问不了"。应该直接用 `wecom_login.py` 生成QR码图片,转RGB后通过 MEDIA 发给用户扫码。**铁律:读到 `action: "scan"` → 立即生成QR码,不要先尝试发URL**。原因:企微 scan-login URL 可能需要特定环境/域名,不是所有用户都能打开
 - ⚠️ **QR 码图片交付：企微 MEDIA 语法不支持发图片**（2026-07-08 踩坑）：`hermes send -t "wecom:<chatId>" "MEDIA:/tmp/qr.png"` 返回 success 但 warning `"MEDIA attachments were omitted for wecom"`，图片**不会投递**。根因：`send_message_tool.py` 第 906-919 行的 media 路由只支持 telegram/discord/matrix/weixin/signal/yuanbao/feishu，wecom 被归入 "non-media platforms" 分支跳过。但网关层 `wecom.py` 有 `send_image_file()` 方法（第 1447 行），只是工具层没接上。**当前 workaround：通过飞书发图片**（`hermes send -t "feishu:<chatId>" "MEDIA:/tmp/qr.png"` — 飞书支持 MEDIA），用户在飞书看到二维码后用企微 App 扫码，扫码结果不影响（登录脚本在本机检测扫码，与图片投递平台无关）。**根本修复**：在 `send_message_tool.py` 加 wecom media 分支（类似 feishu/yuanbao 的 `_send_feishu` 模式，调 `adapter.send_image_file()`）
 - ⚠️ **QR 码图片格式**（2026-06-26 踩坑）：Playwright 拦截到的企微登录二维码是 **1-bit grayscale PNG**，企微客户端**无法渲染**会显示裂图。必须转 RGB 再发送：`Image.open(qr).convert('RGB').resize((800,800), Image.NEAREST).save(qr_v2)`
-- 🚨 **扫码授权发图片不发 URL + 等待期不空转**（2026-08-27 杨文丽案，8 轮返工的完整链路复盘）：
+- 🚨 **扫码授权发图片不发 URL + 等待期不空转**（2026-08-27 某成员授权案，8 轮返工的完整链路复盘）：
   - **症状**：二维码以 URL/链接形式发出，用户反馈「扫不了/打不开」，重试 7 轮无果；第 8 轮改发图片一次成功。等待期连发 10+ 条空消息，会话推到 364 条。
   - **根因（三层叠加）**：①企微聊天内链接打开受限，二维码 URL 用户侧不可用——同一二维码，载体形态决定可用性；②`wecom_auth_flow.py` 拦截的 QR 是 1-bit PNG，直接发是裂图；③skill 精简卡（2026-08-27 分层改造）把扫码授权流程删掉了，教训只写在 daily-reflection-guidelines #151（反思任务才加载），日常授权场景根本看不到——**教训写错 skill 等于没写**。
   - **正确行为**：`--wait-done` 拿到 `reply_media` 后，先 `python3 scripts/qr_to_wecom.py <qr.png> <qr.jpg>` 转 1160×1160 白边 RGB JPEG，`MEDIA:` 直发 + 「长按识别图中二维码」提示；等待用 `poll_command` 后台轮询，不空转刷屏。

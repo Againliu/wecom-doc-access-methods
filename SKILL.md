@@ -54,7 +54,7 @@ SmartPage(a1_) 读取是纯 HTTP，不依赖浏览器，doctor 失败也能读�
 MCP 返回 850001/851014 时，浏览器通道（扫码 cookie）完全独立可用。
 `wecom_status.py` 已分栏显示 MCP / Browser 两通道，浏览器通就还能读。
 
-## 扫码授权铁律（2026-08-27 杨文丽案 8 轮返工换来的）
+## 扫码授权铁律（2026-08-27 某成员授权案 8 轮返工换来的）
 1. **入口**：`python3 /root/.hermes/scripts/wecom_auth_flow.py --check <wecom_userid>`；
    `auth_required` → `--wait-done`（不是 `--wait`），返回 `reply_media` + `poll_command`。
 2. **发二维码一律发图片，绝不发 URL/链接**：企微聊天里链接打不开（8-27 实测 7 轮扫不了）。
