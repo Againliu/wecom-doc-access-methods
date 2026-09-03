@@ -8,9 +8,11 @@
   - **背景**：负责人 2026-09-02 指示"不同渠道登录/授权的账号信息要都能及时入库，对应关系管理好"，盘点发现飞书 OAuth 授权完成时不回写姓名
   - **四渠道姓名/ID 入库矩阵**：①企微机器人对话（仅 userid，平台限制，靠②补名）②企微文档扫码登录（✅ userName 自动捕获）③飞书机器人对话（✅ adapter 自带）④企微里点飞书 OAuth（✅ 本次补上）
   - **改动**：`wecom_login.py` 登录后抓 `basicClientVars.userInfo.userName` → `login_user` 字段；`lark_bridge.verify_profile` 2→3 元返回（含 user_name）；`lark_auth_flow` 完成时 `set_login_display_name` 回写（不覆盖已验证成员）
-  - **新增** `references/multi-channel-account-enrollment-2026-09.md`（四渠道矩阵+改动详情+验证记录），并登记进 SKILL.md 章节索引
+  - **新增** `references/wecom-login-user-info-capture-2026-09.md`（扫码登录捕获用户信息），登记进 SKILL.md 章节索引（跨渠道矩阵后来移到 Agent 侧方案，见 v5.11.1）
   - **验证**：`verify_profile` 实测返回含姓名三元组 ✅；`lark_auth_flow --check` 回归 ✅；`wecom_login.py` login_user 落盘 ✅
   - 详见 `references/multi-channel-account-enrollment-2026-09.md`
+
+- **2026-09-03 09:30** (v5.11.1): 🧭 **职责边界修订**：本 skill 只管企微文档逻辑（含扫码登录+登录后捕获用户信息）；四渠道/多渠道账号对应关系内容移出，归 Agent 侧多用户方案（skill-building-standard「多用户数据隔离」章节 + 其 references/multi-channel-account-enrollment-2026-09.md）。跨渠道方案 reference 从本 skill 移除，保留企微登录侧 `wecom-login-user-info-capture-2026-09.md`。
 
 - **2026-08-24 21:00** (v5.8.0): 🖼️ **图片管线存量修复经验(5页74张占位符)**
   - **现象**:5 页 74 张图全为 `[图片: alt]` 占位符,图片管线整体通(同班新下载 184 张、CDN 缓存 1077 条)
