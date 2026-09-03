@@ -1,6 +1,6 @@
 ---
 name: wecom-doc-access-methods
-version: 5.11.0
+version: 5.11.1
 description: >
   读取：s3_ 智能表格(dop-api全量)、e3_ 电子表格(原生JS API)、w3_ 微文档(opendoc API完整正文)、m4_ 思维导图(dop-api/get/mind)。
   编辑：w3_ 微文档(MCP edit_doc_content全量覆写 + 浏览器键盘增删改)、e3_ 电子表格(MCP sheet_* + 浏览器 mutation API 写入)、s3_ 智能表格(MCP smartsheet_* 17种字段类型)。
@@ -98,7 +98,7 @@ MCP 返回 850001/851014 时，浏览器通道（扫码 cookie）完全独立可
 | Playwright + dop-api 详细步骤 | `references/playwright-dop-api-guide.md` |
 | MCP 能力范围与限制 | `references/mcp-api-guide.md` |
 | 身份隔离规则 | `references/identity-resolution-pitfalls.md` |
-| 多渠道账号自动入库/姓名捕获/四渠道对应关系 | `references/multi-channel-account-enrollment-2026-09.md` |
+| 扫码登录后捕获用户信息（login_user/回写姓名） | `references/wecom-login-user-info-capture-2026-09.md` |
 | 其余 30+ 文件完整索引 | `references/reference-index.md` |
 | 改造前原始章节（定位/适用场景/身份隔离全文/方案速查/故障速查） | `references/original-context.md` |
 
