@@ -1148,3 +1148,11 @@ MCP 返回 851014（授权过期）/ 850001 时，**不等于读不了文档**�
 **修复**：离线模式跑完后自动执行 `doctor`（真实浏览器启动），文案改为「离线测试 + doctor 通过；在线读取能力未测」。
 
 <!-- --wait 废弃口径已补完(2026-08-18):企微硬报错改用 --wait-done,飞书仍用 --wait。改动同时覆盖 SKILL.md 与 references/pitfalls.md。 -->
+
+## 陷阱：版本改了但没走发布闭环 = 集成没完成（2026-09-03）
+
+**现象**：v5.11.0（多渠道账号自动入库）9-2 只改了本地 SKILL.md/脚本，没 commit、没推 GitLab/GitHub、OpenClaw 副本没同步、章节索引没登记新 reference。次日用户问"集成到 skill 了吗"，实际处于"写了但没发布"状态——skill 改动的完成判据是六端版本闭环（SKILL.md 版本 == changelog == README 版本表 == GitHub/GitLab/OpenClaw 副本），不是"文件改了"。
+
+**规则**：改 SKILL.md → 同回合内完成 ①章节索引登记新 reference ②changelog 版本条目 ③README 版本表 ④commit ⑤publish_skill.sh（GitLab+GitHub+OpenClaw）⑥六端版本读回验证。中断时至少把①-④做完并留 TODO。
+
+**附带**：GitHub push 本机不通（github.com 超时）走 Lucy bundle 中转；远端分叉（旧 sync commit 非快进）先 `git diff` 确认只增不减再 force push。新 reference 含真实姓名/openid/路径时先脱敏再 commit（publish 扫描 pattern 见 publish_skill.sh Step 1）。
