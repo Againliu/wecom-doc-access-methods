@@ -4,6 +4,14 @@
 
 ## 更新日志
 
+- **2026-09-03 09:20** (v5.11.0): 👤 **多渠道账号自动入库 + 扫码即捕获姓名**
+  - **背景**：负责人 2026-09-02 指示"不同渠道登录/授权的账号信息要都能及时入库，对应关系管理好"，盘点发现飞书 OAuth 授权完成时不回写姓名
+  - **四渠道姓名/ID 入库矩阵**：①企微机器人对话（仅 userid，平台限制，靠②补名）②企微文档扫码登录（✅ userName 自动捕获）③飞书机器人对话（✅ adapter 自带）④企微里点飞书 OAuth（✅ 本次补上）
+  - **改动**：`wecom_login.py` 登录后抓 `basicClientVars.userInfo.userName` → `login_user` 字段；`lark_bridge.verify_profile` 2→3 元返回（含 user_name）；`lark_auth_flow` 完成时 `set_login_display_name` 回写（不覆盖已验证成员）
+  - **新增** `references/multi-channel-account-enrollment-2026-09.md`（四渠道矩阵+改动详情+验证记录），并登记进 SKILL.md 章节索引
+  - **验证**：`verify_profile` 实测返回含姓名三元组 ✅；`lark_auth_flow --check` 回归 ✅；`wecom_login.py` login_user 落盘 ✅
+  - 详见 `references/multi-channel-account-enrollment-2026-09.md`
+
 - **2026-08-24 21:00** (v5.8.0): 🖼️ **图片管线存量修复经验(5页74张占位符)**
   - **现象**:5 页 74 张图全为 `[图片: alt]` 占位符,图片管线整体通(同班新下载 184 张、CDN 缓存 1077 条)
   - **误判教训**:初判"非企微 CDN 外链降级"是错的——复刻主流程实测:源 md 里就是 authcode URL(实测 200/PNG),`replace_images_in_content` R2b 兜底能正常替换。真实根因:这 5 页是 8-21 图片管线修复**之前**同步的,增量同步"未变页面不重建"→ 旧占位符留存

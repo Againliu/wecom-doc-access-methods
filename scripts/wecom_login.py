@@ -16,31 +16,46 @@
   3. stdout 输出 JSON 状态更新
 """
 
-import asyncio, json, os, sys, time, argparse
-from wecom_doc_reader.browser import launch_browser
+import asyncio, json, os, sys, time, argparse, tempfile
+from pathlib import Path
 from playwright.async_api import async_playwright
 
 
-def write_status(status, msg="", status_file=None):
+def write_status(status, msg=""):
     data = {"status": status, "msg": msg, "ts": time.time()}
-    line = json.dumps(data, ensure_ascii=False)
-    print(line, flush=True)
-    if status_file:
+    print(json.dumps(data, ensure_ascii=False), flush=True)
+
+
+def write_private_state(state_file, state):
+    """Atomically replace a credential state file with owner-only mode."""
+    path = Path(state_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(state, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        os.chmod(path, 0o600)
+    except BaseException:
         try:
-            with open(status_file, "w") as f:
-                json.dump(data, f, ensure_ascii=False)
-        except Exception:
+            os.close(descriptor)
+        except OSError:
             pass
+        temporary.unlink(missing_ok=True)
+        raise
 
 
-async def main(state_file, qr_file, timeout_sec, status_file=None):
-    def ws(status, msg=""):
-        write_status(status, msg, status_file)
-
-    ws("starting", "启动 Playwright")
+async def main(state_file, qr_file, timeout_sec):
+    write_status("starting", "启动 Playwright")
 
     async with async_playwright() as p:
-        browser = await launch_browser(p)
+        browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
 
         qr_captured = False
 
@@ -55,9 +70,9 @@ async def main(state_file, qr_file, timeout_sec, status_file=None):
                         with open(qr_file, "wb") as f:
                             f.write(data)
                         qr_captured = True
-                        ws("qr_ready", f"QR码已保存({len(data)}bytes)到 {qr_file}，请扫码")
+                        write_status("qr_ready", f"QR码已保存({len(data)}bytes)到 {qr_file}，请扫码")
                     except Exception as e:
-                        ws("error", f"QR捕获失败: {e}")
+                        write_status("error", f"QR捕获失败: {e}")
 
         page = await browser.new_page(viewport={"width": 800, "height": 600}, bypass_csp=True)
         page.on("response", capture_qr)
@@ -66,11 +81,11 @@ async def main(state_file, qr_file, timeout_sec, status_file=None):
         await page.route("**/*.woff*", lambda route: route.abort())
         await page.route("**/*.ttf", lambda route: route.abort())
 
-        ws("navigating", "打开登录页")
+        write_status("navigating", "打开登录页")
         try:
             await page.goto("https://doc.weixin.qq.com", wait_until="domcontentloaded", timeout=15000)
         except Exception as e:
-            ws("navigating", f"页面加载中: {e}")
+            write_status("navigating", f"页面加载中: {e}")
 
         # 等待 QR 加载（最多 20s）
         for _ in range(20):
@@ -79,63 +94,61 @@ async def main(state_file, qr_file, timeout_sec, status_file=None):
                 break
 
         if not qr_captured:
-            ws("error", "QR码未能加载")
+            write_status("error", "QR码未能加载")
             await browser.close()
-            return
+            return 2
 
-        # 等待扫码 — 双重判断：URL 变化 + wedoc_sid cookie 出现
-        ws("waiting_scan", "等待扫码中...")
+        # 等待扫码
+        write_status("waiting_scan", "等待扫码中...")
         scanned = False
         max_waits = timeout_sec // 2
         for i in range(max_waits):
             await asyncio.sleep(2)
             current_url = page.url
 
-            # 方式1：URL 不再含 login/scenario
-            url_changed = "login" not in current_url.lower() and "scenario" not in current_url.lower()
-
-            # 方式2：cookie 里出现了 wedoc_sid（登录成功的真正标志）
-            has_sid = False
-            try:
-                cookies = await page.context.cookies("https://doc.weixin.qq.com")
-                has_sid = any(c.get("name") == "wedoc_sid" for c in cookies)
-            except Exception:
-                pass
-
-            if url_changed or has_sid:
-                ws("scanned", f"扫码成功! URL: {current_url}, wedoc_sid: {has_sid}")
+            if "login" not in current_url.lower() and "scenario" not in current_url.lower():
+                write_status("scanned", f"扫码成功! 跳转到: {current_url}")
                 scanned = True
                 break
 
             if i % 15 == 14:
-                ws("waiting_scan", f"仍在等待扫码({(i+1)*2}s)...")
+                write_status("waiting_scan", f"仍在等待扫码({(i+1)*2}s)...")
 
         if scanned:
-            # 等 wedoc_sid 真正写入（最多再等 15s），而不是固定 sleep 5s
-            for _ in range(8):
-                await asyncio.sleep(2)
-                try:
-                    cookies = await page.context.cookies("https://doc.weixin.qq.com")
-                    if any(c.get("name") == "wedoc_sid" for c in cookies):
-                        break
-                except Exception:
-                    pass
-
+            await asyncio.sleep(5)
+            # 抓登录用户信息（2026-09-02：userName 一直在 basicClientVars 里，此前没取）
+            user_info = {}
+            try:
+                raw = await page.evaluate("JSON.stringify(window.basicClientVars||{})")
+                user_info = (json.loads(raw) or {}).get("userInfo", {}) if raw else {}
+            except Exception:
+                pass
             context = page.context
             state = await context.storage_state()
-            with open(state_file, "w") as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
+            # 附加用户信息，登录态落盘时一并保存（仅元数据，不含敏感凭证）
+            if user_info:
+                state["login_user"] = {
+                    "name": str(user_info.get("userName", ""))[:64],
+                    "user_id": str(user_info.get("userId", ""))[:64],
+                    "user_type": str(user_info.get("userType", ""))[:16],
+                    "captured_at": int(time.time()),
+                }
+            write_private_state(state_file, state)
 
             cookies = state.get("cookies", [])
-            sid_found = any(c.get("name") == "wedoc_sid" for c in cookies)
-            if sid_found:
-                ws("success", f"登录成功! 保存了{len(cookies)}条cookies到 {state_file}")
-            else:
-                ws("warning", f"已保存{len(cookies)}条cookies到 {state_file}，但缺少 wedoc_sid，可能登录不完整")
+            user_name = state.get("login_user", {}).get("name", "")
+            write_status(
+                "success",
+                f"登录成功! 保存了{len(cookies)}条cookies到 {state_file}"
+                + (f"；登录用户: {user_name}" if user_name else "；未捕获到用户名"),
+            )
+            rc = 0
         else:
-            ws("timeout", "等待超时，QR码可能已过期")
+            write_status("timeout", "等待超时，QR码可能已过期")
+            rc = 1
 
         await browser.close()
+        return rc
 
 
 if __name__ == "__main__":
@@ -143,7 +156,6 @@ if __name__ == "__main__":
     parser.add_argument("--state", default="./wecom_state.json", help="storage_state 输出路径")
     parser.add_argument("--qr", default="/tmp/wecom_qr.png", help="二维码图片输出路径")
     parser.add_argument("--timeout", type=int, default=300, help="等待扫码超时秒数")
-    parser.add_argument("--status-file", default=None, help="状态文件输出路径（JSON，轮询此文件即可自动检测扫码结果）")
     args = parser.parse_args()
 
-    asyncio.run(main(args.state, args.qr, args.timeout, args.status_file))
+    sys.exit(asyncio.run(main(args.state, args.qr, args.timeout)))
