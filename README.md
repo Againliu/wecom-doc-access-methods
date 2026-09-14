@@ -360,6 +360,8 @@ See **`references/testing-plan.md`** — 18 test cases + 7 known-pitfall checks,
 
 | Version | Key Changes |
 |---------|-------------|
+| **v5.12.1** | **扫码授权完成必须主动告知**（2026-09-14）：SKILL.md「扫码授权铁律」第 3 条追加——授权完成第一时间主动告知用户一句话；实现方式=发图后立刻起后台轮询（terminal background + notify_on_complete，循环 `--status`），完成即回复。背景：授权成功未报结果，用户来问才知道。 |
+| **v5.12.0** | **MCP server v1.0.5 能力重估**（2026-09-10）：实测 25 个工具——e3_ 在线表格已有专用读写工具（sheet_* 5 个），新增 create_doc / smartpage_create / smartpage_export_task / upload_doc_file 等；MCP 仍无全局搜索工具（按关键词找文档走浏览器）。 |
 | **v5.11.1** | **职责边界修订**（2026-09-03）：本 skill 只管企微文档逻辑（含扫码登录+用户信息捕获）；四渠道/多渠道账号对应关系移至 Agent 侧多用户方案（skill-building-standard）。 |
 | **v5.11.0** | **多渠道账号自动入库**（2026-09-02）：四渠道姓名/ID 入库矩阵补齐——企微文档扫码登录自动捕获 `userName`（`login_user` 字段）回写 principal.display_name；飞书 OAuth `verify_profile` 升 3 元返回，授权完成自动回写姓名（不覆盖已验证成员）。新增 `references/multi-channel-account-enrollment-2026-09.md`（四渠道矩阵+改动详情+双存储系统说明）。 |
 | **v5.10.0** | **扫码授权体验固化**（来自 8-27 某成员授权案 8 轮返工复盘）：① 新增 `scripts/qr_to_wecom.py`——把 `wecom_auth_flow.py` 拦截的 1-bit PNG 二维码转成 1160×1160 白边 RGB JPEG（企微长按识别一次成功），实测通过。② SKILL.md 精简卡新增「扫码授权铁律」四条（--wait-done 入口 / 发图不发 URL / 等待期后台轮询不空转 / 同一 transaction_id 不重发），修复 8-27 分层改造时误删授权流程导致教训不可见。③ pitfalls.md 新增完整链路复盘条目（三层根因：链接不可用 + 1-bit 裂图 + 教训写错 skill）。**核心教训：教训写错 skill 等于没写——反思类准则要落到实际任务加载的那张卡上。** |
@@ -383,7 +385,7 @@ See **`references/testing-plan.md`** — 18 test cases + 7 known-pitfall checks,
 
 ## Version
 
-v5.7.1 · Updated 2026-08-24
+v5.12.1 · Updated 2026-09-14
 
 ## License
 

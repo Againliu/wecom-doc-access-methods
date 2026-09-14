@@ -12,11 +12,15 @@ mcp_servers:
     url: "https://qyapi.weixin.qq.com/mcp/robot-doc?apikey=YOUR_KEY"
 ```
 
-### 能力范围
+### 能力范围（2026-09-10 实测 server v1.0.5，共 25 个工具）
 
-- ✅ `s3_` 智能表格：可读写
-- ✅ `w3_` 微文档：可读（异步轮询）
-- ❌ `e3_` 旧格式：不支持（errcode 851000）
+- ✅ `s3_` 智能表格：全套读写（add/update/delete × sheet/fields/records，smartsheet_get_sheet/get_fields/get_records）
+- ✅ `w3_` 微文档：读（get_doc_content 异步轮询）+ 写（edit_doc_content，仅普通文档）
+- ✅ 新建：`create_doc`（文档/表格/智能表格）、`smartpage_create`（智能文档，支持多子页+初始内容）
+- ✅ 智能文档导出：`smartpage_export_task` + `smartpage_get_export_result`（异步任务，Markdown）
+- ✅ 附件：`upload_doc_image` / `upload_doc_file`（base64 上传）
+- ✅ `e3_` 在线表格：`sheet_get_info` / `sheet_add_sub` / `sheet_delete_sub` / `sheet_update_range_data` / `sheet_append_data`（旧认知"e3_ 不支持"已过时，仅 get_doc_content 不支持 e3_）
+- ❌ 全局搜索：**没有搜索工具**（tools/list 已核对）——按关键词找文档仍需浏览器或已知 URL
 - ❌ `w3_` blankpage：不支持（errcode 851003）
 
 ### 调用方式

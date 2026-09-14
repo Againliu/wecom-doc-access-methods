@@ -1,6 +1,6 @@
 ---
 name: wecom-doc-access-methods
-version: 5.11.1
+version: 5.12.1
 description: >
   读取：s3_ 智能表格(dop-api全量)、e3_ 电子表格(原生JS API)、w3_ 微文档(opendoc API完整正文)、m4_ 思维导图(dop-api/get/mind)。
   编辑：w3_ 微文档(MCP edit_doc_content全量覆写 + 浏览器键盘增删改)、e3_ 电子表格(MCP sheet_* + 浏览器 mutation API 写入)、s3_ 智能表格(MCP smartsheet_* 17种字段类型)。
@@ -11,8 +11,7 @@ description: >
 
 # 企微文档访问方法（精简卡 v6.0.0 · 2026-08-27 分层改造）
 
-> **本卡 <5000 字符，压缩时不会被剪。** 详细内容在 references/，用
-> `skill_view(name="wecom-doc-access-methods", file="references/<文件>")` 按需加载。
+> 详细内容在 references/，用 `skill_view(file="references/<文件>")` 按需加载。
 
 ## 何时用本 skill
 读写企业微信在线文档（w3_微文档 / e3_电子表格 / s3_智能表格 / m4_思维导图 / a1_SmartPage / 收集表 / 幻灯片 / 流程图）。
@@ -57,17 +56,8 @@ MCP 返回 850001/851014 时，浏览器通道（扫码 cookie）完全独立可
 ## 扫码授权铁律（2026-08-27 某成员授权案 8 轮返工换来的）
 1. **入口(统一,自动识别本机是 Hermes 还是 OpenClaw)**：`python3 scripts/wecom_auth_entry.py --check <发信人ID>`(本 skill 目录下;需要授权时改用 `--wait-done <发信人ID>`,返回二维码路径+轮询命令)。
    发信人 ID 用收到消息时看到的那个(Hermes 侧 `wo…`,OpenClaw 侧企业 userid),不要互换。
-   内部实现(入口自动选,勿直接调):
-   - Hermes 入口：`python3 ~/.hermes/scripts/wecom_auth_flow.py --check <wecom_userid>`
-   - OpenClaw 入口：`python3 ~/.openclaw/scripts/wecom_auth_xiaoming.py --check <wecom_userid>`
-   - ⚠️ OpenClaw 侧 `~/.hermes` 不可读是私有边界(非故障),勿上报勿 chmod;OpenClaw 侧用 `--wait-done <企业userid>` 取二维码。
-     **必须显式传 wecom_userid**（2026-09-01 修）：openclaw 不像 hermes 那样往子进程注入
-     发信人环境变量（实测 `OPENCLAW_CHANNEL_CONTEXT` 在整个运行时零命中，是早先照搬
-     hermes 想当然写的），所以小明拿不到"当前跟我说话的是谁"，必须由你从对话里取到
-     对方的企微 userid 显式传入。安全锁在通讯录校验：传入的 id 查不到就拒绝执行。
-     不传参会报 `credential access requires a gateway-bound sender`——**那不是故障，
-     是缺参数**。此前小明因此反复回报"扫码做不了"。
-   - **小明禁止用 `~/.hermes` 入口**，否则其独立凭据失效。
+   Hermes/OpenClaw 双入口的内部实现、显式传 wecom_userid 的原因（2026-09-01 修）、
+   小明禁止用 `~/.hermes` 入口等细节 → `references/auth-entry-details.md`。
    `auth_required` → `--wait-done`（不是 `--wait`），返回 `reply_media` + `poll_command`。
 2. **发二维码一律发图片，绝不发 URL/链接**：企微聊天里链接打不开（8-27 实测 7 轮扫不了）。
    `reply_media` 是 1-bit PNG 裂图，必须先转换：
@@ -75,14 +65,19 @@ MCP 返回 850001/851014 时，浏览器通道（扫码 cookie）完全独立可
    用 `MEDIA:` 直发 + 提示「长按识别图中二维码」。
 3. **等待期禁止空转刷屏**：用 `poll_command` 后台轮询（terminal background 或下回合再查
    `--status`），不要连发空消息催用户（同案 10+ 条空消息把会话推到 364 条）。
+   **授权完成必须第一时间主动告知用户**（「授权成功，可以正常用」一句话），
+   绝不许只发图不跟结果、干等用户来问（2026-09-14 建哥纠正：授权完成他来问才知道）。
+   实现方式：发图后立刻起后台轮询进程（terminal background + notify_on_complete，
+   循环 `--status <transaction_id>` 直到 completed），完成即回复。
 4. **只查同一 transaction_id**：用户扫码后不要重新生成二维码，超时就明说并重新起一个。
-5. **扫码即自动捕获姓名（2026-09-02 v5.11.0）**：`wecom_login.py` 登录成功后自动读取
-   `basicClientVars.userInfo.userName` 存入状态文件 `login_user` 字段，
-   `wecom_auth_flow.py` 完成时回写 principal.display_name（`set_login_display_name`，
-   不覆盖已验证成员）。新用户扫码后无需再人工配对姓名；读历史登录态可用
-   `login_user` 字段识别归属。注意：**cookie 有效才能拿到名字**（过期后页面返回
-   guest/userName 为空）；这是登录页标注，不等于身份验证——企微通道身份仍以
-   平台原生 sender 绑定为准。
+5. **扫码即自动捕获姓名（2026-09-02 v5.11.0）**：扫码登录自动带名回写 principal，
+   无需人工配对；细节（login_user 字段、cookie 有效才能拿名字、登录页标注≠身份验证）
+   → `references/auth-entry-details.md` 与 `references/wecom-login-user-info-capture-2026-09.md`。
+6. **MCP server v1.0.5 能力重估（2026-09-10 v5.12.0）**：实测 25 个工具——
+   e3_ 在线表格已有专用读写工具（sheet_* 5 个，旧认知"e3_ 不支持 MCP"已过时，仅 get_doc_content 不支持）；
+   新增 create_doc / smartpage_create / smartpage_export_task / upload_doc_file 等。
+   **MCP 仍无全局搜索工具**（按关键词找文档走浏览器）。
+   全量工具清单 → `references/mcp-api-guide.md`。
 
 ## 卡住时的固定顺序（不要自创第四步）
 1. 读 `references/error-mapping.md` 对号入座；
