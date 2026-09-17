@@ -19,7 +19,7 @@ body: { pad_id: "a1_xxx", pad_ver: 0, req_ts: <unix秒> }
 后者实测返回 ret=-174002 "padId invalid"；直接调 reader.py 的 _read_smartpage 可见正确参数）。
 翻页接口 payload 同理：`{pad_id, type: [1,2,5,12,13,26,27,28], limit: 200, need_path: false, cursor?}`，
 带 `?sid=<opendoc返回>&wedoc_xsrf=1`。cookie 来源注意：wecom_states/ 下同名 state 可能
-已过期（"ticket not match"），新登录态在 /root/.hermes/identity/wecom/<uuid>.json（按
+已过期（"ticket not match"），新登录态在 <成员凭证路径>（按
 login_user.name 找本人）。
 
 返回：

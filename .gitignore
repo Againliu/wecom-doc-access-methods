@@ -7,6 +7,7 @@ __pycache__/
 SKILL.md.bak-*
 
 # 敏感文件（含内部 IP/userid/人名，不公开发布）
+references/identity-resolution-pitfalls/
 references/identity-resolution-pitfalls.md
 references/851003-diagnostic.md
 
@@ -53,6 +54,7 @@ __pycache__/
 *.pyc
 SKILL.md.bak-*
 .gitignore.bak-*
+references/identity-resolution-pitfalls/
 references/identity-resolution-pitfalls.md
 references/851003-diagnostic.md
 scripts/wecom_states/
